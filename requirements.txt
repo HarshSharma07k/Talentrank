@@ -1,0 +1,11 @@
+sentence-transformers
+faiss-cpu
+fastAPI
+uvicorn[standard]
+pydantic
+pandas
+pyarrow
+numpy
+scikit-learn
+torch
+pytest
