@@ -9,13 +9,19 @@ from typing import Any, AsyncIterator
 
 import faiss
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from src.talentrank import embeddings as embeddings_module
 from src.talentrank import pipeline as pipeline_module
 from src.talentrank import rerank as rerank_module
-from src.talentrank.config import BI_ENCODER_MODEL_NAME, CROSS_ENCODER_MODEL_NAME, JOB_INDEX_PATH
+from src.talentrank.config import (
+    BI_ENCODER_MODEL_NAME,
+    CORS_ALLOWED_ORIGINS,
+    CROSS_ENCODER_MODEL_NAME,
+    JOB_INDEX_PATH,
+)
 from src.talentrank.pipeline import match
 
 
@@ -38,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 1. Detect the RTX 3050 GPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("\n" + "="*40)
-    print(f"🚀 BOOTING ML ENGINE ON: {device.upper()}")
+    print(f"BOOTING ML ENGINE ON: {device.upper()}")
     print("="*40 + "\n")
 
     index_path = Path(JOB_INDEX_PATH)
@@ -56,6 +62,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="TalentRank API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 
 @app.get("/health")

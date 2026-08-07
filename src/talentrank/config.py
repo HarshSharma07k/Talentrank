@@ -21,3 +21,8 @@ HNSW_EF_SEARCH = 64
 
 TOP_K = 10
 CANDIDATE_K = 100
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]

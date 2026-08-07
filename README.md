@@ -125,6 +125,19 @@ curl -X POST "http://localhost:8000/match" \
   -d "{\"resume_text\": \"Experienced Python backend engineer with machine learning expertise.\"}"
 ```
 
+### 4. Run the Frontend
+
+A React + TypeScript + Tailwind client lives in `frontend/`. With the API running on `http://localhost:8000`:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Then open `http://localhost:5173`. See `frontend/README.md` for details.
+
 ## 📂 Repository Layout
 
 ```text
@@ -135,6 +148,7 @@ talentrank/
 ├── data/
 ├── scripts/
 ├── src/talentrank/
+├── frontend/
 └── tests/
 ```
 
