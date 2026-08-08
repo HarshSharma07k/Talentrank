@@ -53,7 +53,12 @@ class Settings(BaseSettings):
     hnsw_ef_search: int = 64
 
     # Retrieval / rerank sizing.
-    default_top_k: int = 100
+    # 30, not the 100 this project started with, and not the 25 enhancements/08
+    # itself first suggested: measured NDCG@10 at top_k=25 dropped to 0.0000 (versus
+    # 0.0071 at top_k=100), while top_k=30 held at 0.0077 -- so 30 was chosen because
+    # it is the smallest value this project measured with zero NDCG regression, not
+    # because it is a round number. See measured-facts.md for the full matrix.
+    default_top_k: int = 30
     default_top_n: int = 10
     max_top_k: int = 200
     max_top_n: int = 50
