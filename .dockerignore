@@ -1,5 +1,12 @@
 data/raw/
 .venv/
-__pycache__/
+**/__pycache__/
 *.pyc
 .git/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+frontend/node_modules/
+frontend/dist/
+.claude/
+tests/

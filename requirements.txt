@@ -1,11 +1,26 @@
-sentence-transformers
-faiss-cpu
-fastAPI
-uvicorn[standard]
-pydantic
-pandas
-pyarrow
-numpy
-scikit-learn
-torch
-pytest
+# Pinned 2026-08-08 (see .claude/reference/measured-facts.md).
+# torch is pinned to the CUDA build used in local dev (+cu128). The Dockerfile
+# installs the CPU wheel from a separate index for the same version instead of
+# this line -- the pin fixes the *version*, the install source decides the variant.
+sentence-transformers==5.5.1
+faiss-cpu==1.14.2
+fastapi==0.136.3
+uvicorn[standard]==0.49.0
+pydantic==2.13.4
+pandas==3.0.3
+pyarrow==24.0.0
+numpy==2.4.6
+scikit-learn==1.9.0
+torch==2.11.0
+pytest==9.0.3
+
+# Used but previously unlisted.
+requests==2.34.2
+safetensors==0.8.0
+transformers==5.10.2
+huggingface-hub==1.18.0
+
+# New, for upcoming enhancement phases (config, resume upload).
+pydantic-settings==2.15.0
+pypdf==6.15.0
+python-docx==1.2.0

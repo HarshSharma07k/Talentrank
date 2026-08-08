@@ -27,6 +27,7 @@ from src.talentrank.pipeline import match
 
 class MatchRequest(BaseModel):
     """Request payload for resume-to-job matching."""
+
     resume_text: str
 
 
@@ -43,13 +44,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 1. Detect the RTX 3050 GPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("\n" + "="*40)
+    print("\n" + "=" * 40)
     print(f"BOOTING ML ENGINE ON: {device.upper()}")
-    print("="*40 + "\n")
+    print("=" * 40 + "\n")
 
     index_path = Path(JOB_INDEX_PATH)
     FAISS_INDEX = faiss.read_index(str(index_path))
-    
+
     # 2. Route the models directly to the GPU VRAM
     BI_ENCODER_MODEL = SentenceTransformer(BI_ENCODER_MODEL_NAME, device=device)
     CROSS_ENCODER_MODEL = CrossEncoder(CROSS_ENCODER_MODEL_NAME, device=device)

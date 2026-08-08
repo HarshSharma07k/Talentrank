@@ -74,7 +74,6 @@ class TextEmbeddingEncoder:
     def __init__(self, model_name: str = BI_ENCODER_MODEL_NAME, cache_dir: Path | None = None) -> None:
         self.model_name = model_name
         self.cache_dir = Path(cache_dir) if cache_dir is not None else EMBEDDINGS_CACHE_DIR
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._model: SentenceTransformer | None = None
 
     @property
@@ -165,7 +164,7 @@ class TextEmbeddingEncoder:
         self,
         texts: Sequence[str],
         batch_size: int = EMBEDDING_BATCH_SIZE,
-        use_cache: bool = True,
+        use_cache: bool = False,
         show_progress_bar: bool = True,
     ) -> np.ndarray:
         """Encode texts into L2-normalized embeddings, using the cache when possible."""
@@ -184,7 +183,8 @@ class TextEmbeddingEncoder:
             show_progress_bar=show_progress_bar,
         )
         embeddings = np.asarray(embeddings, dtype=np.float32)
-        self.save_embeddings(normalized_texts, embeddings)
+        if use_cache:
+            self.save_embeddings(normalized_texts, embeddings)
         return embeddings
 
 
@@ -193,7 +193,7 @@ def encode_texts(
     model_name: str = BI_ENCODER_MODEL_NAME,
     cache_dir: Path | None = None,
     batch_size: int = EMBEDDING_BATCH_SIZE,
-    use_cache: bool = True,
+    use_cache: bool = False,
     show_progress_bar: bool = True,
 ) -> np.ndarray:
     """Convenience wrapper for batch encoding text into normalized embeddings."""

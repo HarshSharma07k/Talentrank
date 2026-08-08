@@ -1,0 +1,7 @@
+# Pinned 2026-08-08. Installed on top of requirements.txt for local dev and CI.
+-r requirements.txt
+
+pytest-cov==7.1.0
+httpx==0.28.1
+ruff==0.16.2
+mypy==2.3.0

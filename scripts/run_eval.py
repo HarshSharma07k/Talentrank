@@ -4,8 +4,9 @@ import numpy as np
 import sys
 import os
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.talentrank.pipeline import retrieve_only, match
+
 
 def evaluate_system():
     # Load the evaluation split
@@ -14,9 +15,9 @@ def evaluate_system():
     except FileNotFoundError:
         print("❌ Error: Could not find relevance_eval.parquet. Are you in the project root?")
         return
-        
-    unique_resumes = eval_df['resume_text'].unique()[:50] # Evaluate on 50 resumes to save time
-    
+
+    unique_resumes = eval_df["resume_text"].unique()[:50]  # Evaluate on 50 resumes to save time
+
     baseline_ndcgs = []
     reranked_ndcgs = []
 
@@ -24,24 +25,28 @@ def evaluate_system():
 
     for resume in unique_resumes:
         # Get true labels for this specific resume
-        true_jobs = eval_df[eval_df['resume_text'] == resume]
+        true_jobs = eval_df[eval_df["resume_text"] == resume]
         # Create a dictionary mapping job_id -> relevance label (1 or 0)
-        true_labels_dict = dict(zip(true_jobs['job_id'].astype(str), true_jobs['relevance']))
+        true_labels_dict = dict(zip(true_jobs["job_id"].astype(str), true_jobs["relevance"]))
 
         # --- 1. Baseline: Bi-encoder only ---
-        baseline_results = retrieve_only(resume, top_k=10) 
-        
+        baseline_results = retrieve_only(resume, top_k=10)
+
         # Build label array and score array for NDCG
-        baseline_true = [true_labels_dict.get(str(res.get('job_id')), 0) for res in baseline_results]
-        
-        # If Copilot didn't provide a 'score' key, we synthesize one based on rank order
-        baseline_pred = [res.get('score', 10 - i) for i, res in enumerate(baseline_results)]
-        
+        baseline_true = [true_labels_dict.get(str(res.get("job_id")), 0) for res in baseline_results]
+
+        for res in baseline_results:
+            assert "bi_encoder_score" in res, f"Missing 'bi_encoder_score' in retrieve_only() result: {res.keys()}"
+        baseline_pred = [res["bi_encoder_score"] for res in baseline_results]
+
         # --- 2. Reranked: Bi-encoder + Cross-encoder ---
         reranked_results = match(resume, top_k=50, top_n=10)
-        
-        reranked_true = [true_labels_dict.get(str(res.get('job_id')), 0) for res in reranked_results]
-        reranked_pred = [res.get('score', res.get('cross_score', 10 - i)) for i, res in enumerate(reranked_results)]
+
+        reranked_true = [true_labels_dict.get(str(res.get("job_id")), 0) for res in reranked_results]
+
+        for res in reranked_results:
+            assert "cross_encoder_score" in res, f"Missing 'cross_encoder_score' in match() result: {res.keys()}"
+        reranked_pred = [res["cross_encoder_score"] for res in reranked_results]
 
         # --- 3. Calculate NDCG@10 ---
         # Only score if there is at least 1 relevant job in the ground truth pool
@@ -60,6 +65,7 @@ def evaluate_system():
     print("=================================================")
     if final_reranked > final_baseline:
         print("✅ Success! The Cross-Encoder successfully improved your ranking precision.")
+
 
 if __name__ == "__main__":
     evaluate_system()

@@ -54,10 +54,33 @@ class FaissIndexManager:
         if index is None:
             base_index = faiss.IndexHNSWFlat(self.dimension, self.m, self.metric)
             base_index.hnsw.efConstruction = self.ef_construction
-            base_index.hnsw.efSearch = self.ef_search
             self.index = faiss.IndexIDMap2(base_index)
         else:
             self.index = index
+
+        self._apply_ef_search()
+
+    def _hnsw_index(self) -> faiss.Index:
+        """Return the HNSW-carrying index, unwrapping an IndexIDMap2 if present.
+
+        `IndexIDMap2.index` is typed as the generic SWIG `Index` base class, which has
+        no `.hnsw` attribute even when the underlying object is an `IndexHNSWFlat` --
+        `downcast_index` recovers the concrete type.
+        """
+
+        if isinstance(self.index, faiss.IndexIDMap2):
+            return faiss.downcast_index(self.index.index)
+        return self.index
+
+    def _apply_ef_search(self) -> None:
+        """Push `self.ef_search` onto the live FAISS index object.
+
+        Both index construction and `load_index` route through this: FAISS only reads
+        `efSearch` from the HNSW struct at query time, so a value read from a metadata
+        sidecar (or passed to `__init__`) does nothing until it lands here.
+        """
+
+        self._hnsw_index().hnsw.efSearch = self.ef_search
 
     @staticmethod
     def _as_float32_matrix(vectors: np.ndarray | Sequence[Sequence[float]]) -> np.ndarray:
@@ -94,7 +117,12 @@ class FaissIndexManager:
         if query.shape[1] != self.dimension:
             raise ValueError(f"Query dimension mismatch: expected {self.dimension}, received {query.shape[1]}.")
 
-        scores, ids = self.index.search(query, int(k))
+        k = int(k)
+        if k > self.ef_search:
+            self.ef_search = k
+            self._apply_ef_search()
+
+        scores, ids = self.index.search(query, k)
         hits: list[SearchHit] = []
         for job_id, score in zip(ids[0], scores[0]):
             if int(job_id) == -1:

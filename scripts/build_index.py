@@ -58,7 +58,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_index(jobs_path: Path, index_path: Path, cache_dir: Path, batch_size: int, use_cache: bool, show_progress: bool) -> Path:
+def build_index(
+    jobs_path: Path, index_path: Path, cache_dir: Path, batch_size: int, use_cache: bool, show_progress: bool
+) -> Path:
     """Build and persist the job posting FAISS index."""
 
     jobs = pd.read_parquet(jobs_path)
@@ -68,10 +70,11 @@ def build_index(jobs_path: Path, index_path: Path, cache_dir: Path, batch_size: 
         raise ValueError(f"Missing required columns in {jobs_path}: {sorted(missing_columns)}")
 
     combined_texts = (
-        jobs["job_title"].fillna("").astype(str).str.strip()
-        + " "
-        + jobs["text"].fillna("").astype(str).str.strip()
-    ).str.replace(r"\s+", " ", regex=True).str.strip().tolist()
+        (jobs["job_title"].fillna("").astype(str).str.strip() + " " + jobs["text"].fillna("").astype(str).str.strip())
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+        .tolist()
+    )
 
     encoder = TextEmbeddingEncoder(cache_dir=cache_dir)
     embeddings = encoder.encode_texts(

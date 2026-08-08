@@ -21,9 +21,7 @@ JOB_SOURCE_CANDIDATES = (
     RAW_DATA_DIR / "archive" / "job_summary.csv",
 )
 
-RESUME_SOURCE_CANDIDATES = (
-    RAW_DATA_DIR / "archive (3)" / "Resume" / "Resume.csv",
-)
+RESUME_SOURCE_CANDIDATES = (RAW_DATA_DIR / "archive (3)" / "Resume" / "Resume.csv",)
 
 JOB_COLUMN_ALIASES = {
     "job_id": ("job_id", "id", "jobid"),
@@ -48,13 +46,41 @@ CATEGORY_KEYWORDS = {
     "AVIATION": ("aviation", "pilot", "flight attendant", "airline", "aerospace", "aircraft", "aircrew"),
     "BANKING": ("banking", "banker", "bank manager", "loan officer", "credit analyst", "branch manager"),
     "BPO": ("bpo", "call center", "customer support", "customer service", "contact center", "telecaller"),
-    "BUSINESS-DEVELOPMENT": ("business development", "partnership", "account executive", "sales development", "bdm", "alliances"),
+    "BUSINESS-DEVELOPMENT": (
+        "business development",
+        "partnership",
+        "account executive",
+        "sales development",
+        "bdm",
+        "alliances",
+    ),
     "CHEF": ("chef", "cook", "culinary", "pastry chef", "commis", "kitchen manager"),
-    "CONSTRUCTION": ("construction", "site engineer", "civil engineer", "project manager", "quantity surveyor", "foreman"),
+    "CONSTRUCTION": (
+        "construction",
+        "site engineer",
+        "civil engineer",
+        "project manager",
+        "quantity surveyor",
+        "foreman",
+    ),
     "CONSULTANT": ("consultant", "advisor", "adviser", "strategy", "management consultant", "business consultant"),
     "DESIGNER": ("designer", "graphic designer", "ui designer", "ux designer", "product designer", "visual designer"),
-    "DIGITAL-MEDIA": ("digital media", "content creator", "social media", "video editor", "digital marketing", "media planner"),
-    "ENGINEERING": ("engineer", "engineering", "mechanical engineer", "electrical engineer", "process engineer", "project engineer"),
+    "DIGITAL-MEDIA": (
+        "digital media",
+        "content creator",
+        "social media",
+        "video editor",
+        "digital marketing",
+        "media planner",
+    ),
+    "ENGINEERING": (
+        "engineer",
+        "engineering",
+        "mechanical engineer",
+        "electrical engineer",
+        "process engineer",
+        "project engineer",
+    ),
     "FINANCE": ("finance", "financial analyst", "fp&a", "controller", "investment analyst", "treasury", "risk analyst"),
     "FITNESS": ("fitness", "trainer", "personal trainer", "coach", "gym instructor", "wellness"),
     "HEALTHCARE": ("healthcare", "nurse", "doctor", "medical", "pharmacist", "therapist", "clinical"),

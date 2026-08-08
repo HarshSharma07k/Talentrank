@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.talentrank.config import JOBS_CLEAN_PATH, JOB_INDEX_PATH
+from src.talentrank.config import DEFAULT_TOP_K, DEFAULT_TOP_N, JOBS_CLEAN_PATH, JOB_INDEX_PATH
 from src.talentrank.embeddings import TextEmbeddingEncoder
 from src.talentrank.index import FaissIndexManager
 from src.talentrank.rerank import rerank
@@ -19,13 +19,14 @@ def _load_jobs_frame() -> pd.DataFrame:
     jobs_path = Path(JOBS_CLEAN_PATH)
     if not jobs_path.exists():
         raise FileNotFoundError(f"Jobs parquet file does not exist: {jobs_path}")
-    
+
     df = pd.read_parquet(jobs_path)
-    
+
     # OPTIMIZATION: Convert once, set as index for instant O(1) lookups
     df["job_id"] = df["job_id"].astype(str)
     df.set_index("job_id", inplace=True)
     return df
+
 
 @lru_cache(maxsize=1)
 def _load_index_manager() -> FaissIndexManager:
@@ -34,9 +35,10 @@ def _load_index_manager() -> FaissIndexManager:
         raise FileNotFoundError(f"FAISS index file does not exist: {index_path}")
     return FaissIndexManager.load_index(index_path)
 
+
 def _resolve_job_row(jobs: pd.DataFrame, job_id: int) -> dict[str, Any] | None:
     str_id = str(job_id)
-    
+
     # Instant hash-map lookup
     if str_id not in jobs.index:
         return None
@@ -44,6 +46,7 @@ def _resolve_job_row(jobs: pd.DataFrame, job_id: int) -> dict[str, Any] | None:
     row = jobs.loc[str_id].to_dict()
     row["job_id"] = int(job_id)
     return row
+
 
 def retrieve_only(resume_text: str, top_k: int) -> list[dict[str, Any]]:
     """Retrieve the top_k jobs with bi-encoder scores only."""
@@ -56,7 +59,7 @@ def retrieve_only(resume_text: str, top_k: int) -> list[dict[str, Any]]:
         return []
 
     encoder = TextEmbeddingEncoder()
-    query_embedding = encoder.encode_texts([query_text], show_progress_bar=False)[0]
+    query_embedding = encoder.encode_texts([query_text], use_cache=False, show_progress_bar=False)[0]
 
     index_manager = _load_index_manager()
     hits = index_manager.search(query_embedding, k=top_k)
@@ -74,7 +77,8 @@ def retrieve_only(resume_text: str, top_k: int) -> list[dict[str, Any]]:
 
     return candidates
 
-def match(resume_text: str, top_k: int = 100, top_n: int = 10) -> list[dict[str, Any]]:
+
+def match(resume_text: str, top_k: int = DEFAULT_TOP_K, top_n: int = DEFAULT_TOP_N) -> list[dict[str, Any]]:
     """Retrieve candidates and rerank them with the cross-encoder."""
 
     candidates = retrieve_only(resume_text=resume_text, top_k=top_k)

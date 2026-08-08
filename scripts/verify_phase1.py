@@ -1,10 +1,11 @@
 import pandas as pd
 import os
 
+
 def verify_phase1():
     # Adjusted paths to match your agent's exact output files
     processed_dir = "data/processed"
-    
+
     jobs_file = os.path.join(processed_dir, "jobs_clean.parquet")
     resumes_file = os.path.join(processed_dir, "resumes_clean.parquet")
     eval_file = os.path.join(processed_dir, "relevance_eval.parquet")
@@ -18,11 +19,11 @@ def verify_phase1():
         return
 
     print("=== PHASE 1 VERIFICATION ===")
-    
+
     # 1. Measure Corpus Size (Your <N> for the resume)
     jobs_df = pd.read_parquet(jobs_file)
     print(f"✅ Total Job Corpus Size: {len(jobs_df):,} postings")
-    
+
     # 2. Measure Clean Resumes
     resumes_df = pd.read_parquet(resumes_file)
     print(f"✅ Total Clean Resumes: {len(resumes_df):,} profiles")
@@ -30,9 +31,9 @@ def verify_phase1():
     # 3. Check Eval Split & Label Distribution
     eval_df = pd.read_parquet(eval_file)
     print(f"✅ Eval Split Size: {len(eval_df):,} pairs")
-    
-    if 'label' in eval_df.columns:
-        positive_labels = eval_df['label'].sum()
+
+    if "label" in eval_df.columns:
+        positive_labels = eval_df["label"].sum()
         pct_positive = (positive_labels / len(eval_df)) * 100
         print(f"✅ Positive Relevance Labels (Eval): {positive_labels:,} ({pct_positive:.1f}%)")
     else:
@@ -52,6 +53,7 @@ def verify_phase1():
         if len(val) > 100:
             val = val[:97] + "..."
         print(f"{col}: {val}")
+
 
 if __name__ == "__main__":
     verify_phase1()

@@ -1,0 +1,28 @@
+# Config only -- no [build-system]. `src` is an implicit namespace package
+# (no src/__init__.py) and stays that way; see .claude/enhancements/99-rejected-alternatives.md.
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+exclude = [".venv", "data"]
+
+# Deliberately narrow: E4/E7/E9/F is ruff's own default rule set. The codebase has
+# pre-existing style debt (import sorting, missing `zip(strict=)`, etc.) that a wider
+# set would flag everywhere; widen this in its own commit once that debt is paid down.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+exclude = ["^\\.venv/", "^data/"]
+
+[tool.coverage.run]
+source = ["src/talentrank"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover"]
