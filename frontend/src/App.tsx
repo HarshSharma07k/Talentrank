@@ -27,8 +27,8 @@ function App() {
     setErrorMessage("");
 
     try {
-      const matches = await matchResume(resumeText, controller.signal);
-      setResults(matches);
+      const response = await matchResume(resumeText, controller.signal);
+      setResults(response.results);
       setRequestState("success");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;

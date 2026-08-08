@@ -2,68 +2,98 @@
 
 from __future__ import annotations
 
-import torch
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, AsyncIterator
+import logging
+import subprocess
+import time
+from typing import AsyncIterator
+import uuid
 
-import faiss
-from fastapi import FastAPI
+import anyio
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from sentence_transformers import CrossEncoder, SentenceTransformer
+from fastapi.responses import JSONResponse
+import torch
 
-from src.talentrank import embeddings as embeddings_module
 from src.talentrank import pipeline as pipeline_module
-from src.talentrank import rerank as rerank_module
-from src.talentrank.config import (
-    BI_ENCODER_MODEL_NAME,
-    CORS_ALLOWED_ORIGINS,
-    CROSS_ENCODER_MODEL_NAME,
-    JOB_INDEX_PATH,
-)
-from src.talentrank.pipeline import match
+from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
+from src.talentrank.middleware import RateLimitMiddleware, RequestLoggingMiddleware
+from src.talentrank.models import ModelBundle, get_model_bundle, warmup
+from src.talentrank.schemas import HealthResponse, MatchRequest, MatchResponse
+
+logger = logging.getLogger("talentrank.api")
+if not logger.handlers:
+    # A logger with no handler drops every record below WARNING regardless of what
+    # uvicorn's own --log-level is set to -- that flag only governs uvicorn's loggers.
+    # `logging.basicConfig()` would fix that too, but it configures the *root*
+    # logger, which also raises every third-party logger's effective level (httpx,
+    # huggingface_hub) to INFO, flooding startup with their request-level logs.
+    # Attaching a handler directly here and disabling propagation keeps this scoped
+    # to talentrank's own logger.
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 
-class MatchRequest(BaseModel):
-    """Request payload for resume-to-job matching."""
+def _git_sha() -> str:
+    """Best-effort short git SHA, computed once at import time. "unknown" outside a
+    git checkout (e.g. a container image that doesn't COPY .git/)."""
 
-    resume_text: str
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        return result.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
-FAISS_INDEX: faiss.Index | None = None
-BI_ENCODER_MODEL: SentenceTransformer | None = None
-CROSS_ENCODER_MODEL: CrossEncoder | None = None
+GIT_SHA: str = _git_sha()
+START_TIME: float = time.monotonic()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Load shared models and the FAISS index once at application startup."""
+    """Configure torch/thread limits, then load the model bundle once and warm it.
 
-    global FAISS_INDEX, BI_ENCODER_MODEL, CROSS_ENCODER_MODEL
+    `get_model_bundle()` loads models, the FAISS index, and the jobs frame in one
+    seam (see enhancements/03). Its `FileNotFoundError` (missing `data/processed/`)
+    is caught here rather than left to propagate, because `functools.lru_cache` does
+    not cache an exception -- startup still succeeds instead of crashing, and the
+    first request after the corpus exists retries the load and succeeds.
+    """
 
-    # 1. Detect the RTX 3050 GPU
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("\n" + "=" * 40)
-    print(f"BOOTING ML ENGINE ON: {device.upper()}")
-    print("=" * 40 + "\n")
+    settings = get_settings()
+    torch.set_num_threads(settings.torch_num_threads)
+    torch.set_grad_enabled(False)
+    anyio.to_thread.current_default_thread_limiter().total_tokens = settings.max_request_threads
 
-    index_path = Path(JOB_INDEX_PATH)
-    FAISS_INDEX = faiss.read_index(str(index_path))
+    logger.info("Booting ML engine")
+    try:
+        bundle = get_model_bundle()
+        warmup(bundle)
+        logger.info("Model bundle warm on device=%s", bundle.device)
+    except FileNotFoundError:
+        logger.warning("Corpus artifacts not found at startup; run scripts/prep_data.py and build_index.py.")
 
-    # 2. Route the models directly to the GPU VRAM
-    BI_ENCODER_MODEL = SentenceTransformer(BI_ENCODER_MODEL_NAME, device=device)
-    CROSS_ENCODER_MODEL = CrossEncoder(CROSS_ENCODER_MODEL_NAME, device=device)
-
-    embeddings_module.DEFAULT_SENTENCE_TRANSFORMER_MODEL = BI_ENCODER_MODEL
-    rerank_module.DEFAULT_CROSS_ENCODER_MODEL = CROSS_ENCODER_MODEL
-
-    pipeline_module._load_index_manager()
     yield
 
 
 app = FastAPI(title="TalentRank API", lifespan=lifespan)
 
+# Registration order is significant: the *last*-added middleware becomes the
+# *outermost* layer. CORS must wrap the rate limiter and the logger -- added last --
+# so a 429 or an unhandled error still carries CORS headers, not just a 200.
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
@@ -72,13 +102,76 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    """Return a minimal health check response."""
-    return {"status": "healthy"}
+def _format_validation_errors(exc: RequestValidationError) -> str:
+    """Turn pydantic's structured error list into one human sentence, per enhancements/02."""
+
+    parts: list[str] = []
+    for error in exc.errors():
+        loc = ".".join(str(piece) for piece in error["loc"] if piece != "body")
+        parts.append(f"{loc}: {error['msg']}" if loc else str(error["msg"]))
+    return "; ".join(parts) or "Invalid request."
 
 
-@app.post("/match")
-def match_resume(request: MatchRequest) -> list[dict[str, Any]]:
-    """Match a resume against the job corpus and return ranked results."""
-    return match(request.resume_text)
+@app.exception_handler(RequestValidationError)
+def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": _format_validation_errors(exc)})
+
+
+@app.exception_handler(FileNotFoundError)
+def handle_missing_artifacts(request: Request, exc: FileNotFoundError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Corpus artifacts not built; run scripts/prep_data.py and scripts/build_index.py."},
+    )
+
+
+@app.exception_handler(Exception)
+def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    request_id = uuid.uuid4().hex[:8]
+    logger.exception("Unhandled error (request_id=%s)", request_id)
+    return JSONResponse(status_code=500, content={"detail": f"Internal server error (request id: {request_id})."})
+
+
+@app.get("/health", response_model=HealthResponse)
+def health(bundle: ModelBundle = Depends(get_model_bundle)) -> HealthResponse:
+    """Rich, cheap health check that feeds the frontend hero and warming state."""
+
+    settings = get_settings()
+
+    return HealthResponse(
+        status="healthy",
+        version=GIT_SHA,
+        device=bundle.device,
+        warm=bundle.warm,
+        corpus_profile=settings.corpus_profile,
+        corpus_size=len(bundle.jobs),
+        index_size=bundle.index.index.ntotal,
+        bi_encoder=settings.bi_encoder_model_name,
+        cross_encoder=settings.cross_encoder_model_name,
+        cache_backend=settings.cache_backend,
+        uptime_seconds=time.monotonic() - START_TIME,
+    )
+
+
+@app.post("/retrieve", response_model=MatchResponse)
+def retrieve(request: MatchRequest, bundle: ModelBundle = Depends(get_model_bundle)) -> MatchResponse:
+    """Stage 1 only: bi-encoder retrieval, no reranking, never cached. Fast -- the
+    progressive-UI enabler."""
+
+    return pipeline_module.retrieve_response(
+        request.resume_text, top_k=request.top_k, top_n=request.top_n, bundle=bundle
+    )
+
+
+@app.post("/match", response_model=MatchResponse)
+def match_resume(request: MatchRequest, bundle: ModelBundle = Depends(get_model_bundle)) -> MatchResponse:
+    """Retrieve candidates and rerank them with the cross-encoder, fronted by the
+    process result cache -- see enhancements/07."""
+
+    return pipeline_module.cached_match(
+        request.resume_text,
+        top_k=request.top_k,
+        top_n=request.top_n,
+        filters=request.filters,
+        bundle=bundle,
+    )

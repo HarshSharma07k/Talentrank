@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     torch_num_threads: int = 2
     max_concurrent_inferences: int = 1
     inference_queue_timeout_seconds: float = 20.0
+    max_request_threads: int = 8  # Starlette's default threadpool is 40; too much contention on 2 vCPU
 
     # Cache.
     cache_backend: Literal["memory", "redis"] = "memory"

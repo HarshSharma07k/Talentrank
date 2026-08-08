@@ -21,9 +21,6 @@ except ImportError:  # pragma: no cover - optional dependency
     save_safetensors_file = None
 
 
-DEFAULT_SENTENCE_TRANSFORMER_MODEL: SentenceTransformer | None = None
-
-
 @dataclass(slots=True)
 class EmbeddingCacheRecord:
     """Metadata for a cached embedding matrix."""
@@ -71,18 +68,20 @@ def _cache_record_from_fingerprint(cache_dir: Path, fingerprint: str) -> Embeddi
 class TextEmbeddingEncoder:
     """Batch encoder with on-disk caching for job description embeddings."""
 
-    def __init__(self, model_name: str = BI_ENCODER_MODEL_NAME, cache_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = BI_ENCODER_MODEL_NAME,
+        cache_dir: Path | None = None,
+        model: SentenceTransformer | None = None,
+    ) -> None:
         self.model_name = model_name
         self.cache_dir = Path(cache_dir) if cache_dir is not None else EMBEDDINGS_CACHE_DIR
-        self._model: SentenceTransformer | None = None
+        self._model = model
 
     @property
     def model(self) -> SentenceTransformer:
         if self._model is None:
-            if DEFAULT_SENTENCE_TRANSFORMER_MODEL is not None:
-                self._model = DEFAULT_SENTENCE_TRANSFORMER_MODEL
-            else:
-                self._model = SentenceTransformer(self.model_name)
+            self._model = SentenceTransformer(self.model_name)
         return self._model
 
     def cache_record(self, texts: Sequence[str]) -> EmbeddingCacheRecord:

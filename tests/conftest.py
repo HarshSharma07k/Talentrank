@@ -6,25 +6,40 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import hashlib
+import time
 
 import numpy as np
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 
+from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import get_settings
 from src.talentrank.index import FaissIndexManager
+from src.talentrank.models import ModelBundle, get_model_bundle
+
+_LRU_CACHED_GETTERS = (
+    get_settings,
+    get_model_bundle,
+    get_cache_backend,
+)
 
 
 @pytest.fixture(autouse=True)
 def _clear_settings_cache() -> Iterator[None]:
-    """`get_settings` is `@lru_cache`'d; a test that sets env vars must not leak
-    its Settings into the next test. Extend this fixture as more `@lru_cache`d
-    getters (model bundle, cache backend) land in later phases.
+    """These are all `@lru_cache`'d. Without clearing them, a test that monkeypatches
+    a loader (or sets an env var `get_settings` reads) can leak its stub/value into
+    the next test -- or worse, a real value cached from actual `data/` on a dev
+    machine can mask what should be a `FileNotFoundError` in the `data/`-absent CI
+    run. Extend this tuple as more `@lru_cache`'d getters (cache backend, `03`) land
+    in later phases.
     """
 
-    get_settings.cache_clear()
+    for getter in _LRU_CACHED_GETTERS:
+        getter.cache_clear()
     yield
-    get_settings.cache_clear()
+    for getter in _LRU_CACHED_GETTERS:
+        getter.cache_clear()
 
 
 _JOB_TITLES = [
@@ -55,7 +70,8 @@ class StubBiEncoder:
     """Deterministic stand-in for `SentenceTransformer.encode`.
 
     Same call signature as the real model so it can replace
-    `TextEmbeddingEncoder._model` directly in tests without a network call.
+    `TextEmbeddingEncoder._model` (or `ModelBundle.bi_encoder`) directly in tests
+    without a network call.
     """
 
     def encode(
@@ -74,6 +90,17 @@ class StubBiEncoder:
         seed = int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16)
         vector = np.random.default_rng(seed).normal(size=384).astype(np.float32)
         return vector / np.linalg.norm(vector)
+
+
+class StubCrossEncoder:
+    """Deterministic stand-in for `CrossEncoder.predict`."""
+
+    def predict(self, pairs: list[list[str]]) -> np.ndarray:
+        scores = [
+            (int(hashlib.sha256((query + text).encode("utf-8")).hexdigest()[:8], 16) % 1000) / 1000.0
+            for query, text in pairs
+        ]
+        return np.asarray(scores, dtype=np.float32)
 
 
 @pytest.fixture
@@ -109,3 +136,46 @@ def tiny_index() -> FaissIndexManager:
     manager = FaissIndexManager(dimension=384)
     manager.add(vectors, job_ids=list(range(1, 21)))
     return manager
+
+
+@pytest.fixture
+def fake_bundle(
+    tiny_jobs_frame: pd.DataFrame, tiny_index: FaissIndexManager, stub_bi_encoder: StubBiEncoder
+) -> ModelBundle:
+    """A `ModelBundle` built entirely from synthetic fixtures. `models.get_model_bundle`
+    indexes the jobs frame by string `job_id` before handing it out; mirror that here
+    so `pipeline._resolve_job_row`'s `.loc[str_id]` lookup works the same way it does
+    against a real bundle.
+    """
+
+    indexed_jobs = tiny_jobs_frame.copy()
+    indexed_jobs["job_id"] = indexed_jobs["job_id"].astype(str)
+    indexed_jobs = indexed_jobs.set_index("job_id")
+
+    return ModelBundle(
+        device="cpu",
+        bi_encoder=stub_bi_encoder,
+        cross_encoder=StubCrossEncoder(),
+        index=tiny_index,
+        jobs=indexed_jobs,
+        idf={},
+        families=[],
+        loaded_at=time.monotonic(),
+        warm=True,
+    )
+
+
+@pytest.fixture
+def client(fake_bundle: ModelBundle) -> Iterator[TestClient]:
+    """`TestClient(app)` used as a plain instance, so `lifespan` never runs and no
+    real model or FAISS index loads -- see enhancements/17's note on this. The route
+    dependency is swapped for `fake_bundle` instead.
+    """
+
+    from src.talentrank.api import app
+
+    app.dependency_overrides[get_model_bundle] = lambda: fake_bundle
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()

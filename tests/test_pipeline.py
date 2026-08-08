@@ -13,7 +13,7 @@ def test_match_invalid_k_n(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         pipeline,
         "retrieve_only",
-        lambda resume_text, top_k: [{"job_id": 1, "job_text": "example"}],
+        lambda resume_text, top_k, bundle=None: [{"job_id": 1, "job_text": "example"}],
     )
 
     assert pipeline.match("resume text", top_k=5, top_n=0) == []
