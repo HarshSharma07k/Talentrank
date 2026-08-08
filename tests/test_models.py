@@ -11,7 +11,7 @@ import torch
 from src.talentrank import models as models_module
 from src.talentrank import pipeline as pipeline_module
 from src.talentrank.index import FaissIndexManager
-from src.talentrank.models import ModelBundle, _quantize_cross_encoder
+from src.talentrank.models import ModelBundle, _quantize_cross_encoder, _quantize_module
 
 
 def test_bundle_is_singleton(
@@ -79,54 +79,71 @@ class _TinyLinearModel(torch.nn.Module):
         return self.linear(x)
 
 
-class _FakeCrossEncoderOK:
-    """`predict` succeeds regardless of whether `.model` has been quantized."""
+class _FakeCrossEncoder:
+    """`predict` raises once `.model.linear` has actually been swapped to the
+    quantized dynamic type, if `fail_predict=True` -- reproducing the real
+    sentence-transformers 5.x / transformers 5.x incompatibility this project
+    measured directly against its pinned versions (see `_quantize_cross_encoder`'s
+    docstring). With `fail_predict=False`, `predict` always succeeds."""
 
-    def __init__(self) -> None:
+    def __init__(self, fail_predict: bool) -> None:
         self.model = _TinyLinearModel()
         self.predict_calls = 0
+        self._fail_predict = fail_predict
 
     def predict(self, pairs: list[list[str]]) -> list[float]:
         self.predict_calls += 1
-        return [0.0 for _ in pairs]
-
-
-def test_quantize_replaces_model_and_passes_self_test() -> None:
-    cross_encoder = _FakeCrossEncoderOK()
-    original_model = cross_encoder.model
-
-    _quantize_cross_encoder(cross_encoder)
-
-    assert cross_encoder.model is not original_model
-    assert cross_encoder.predict_calls == 1  # the self-test ran
-
-
-class _FakeCrossEncoderBroken:
-    """`predict` raises once `.model.linear` has actually been swapped to the
-    quantized dynamic type -- reproduces the real sentence-transformers 5.x /
-    transformers 5.x incompatibility this project measured directly against its
-    pinned versions (see `_quantize_cross_encoder`'s docstring)."""
-
-    def __init__(self) -> None:
-        self.model = _TinyLinearModel()
-
-    def predict(self, pairs: list[list[str]]) -> list[float]:
-        if not isinstance(self.model.linear, torch.nn.Linear):
+        if self._fail_predict and not isinstance(self.model.linear, torch.nn.Linear):
             raise AttributeError("simulated post-quantization incompatibility")
         return [0.0 for _ in pairs]
 
 
-def test_quantize_rolls_back_on_self_test_failure() -> None:
-    cross_encoder = _FakeCrossEncoderBroken()
+def test_quantize_module_replaces_model() -> None:
+    cross_encoder = _FakeCrossEncoder(fail_predict=False)
     original_model = cross_encoder.model
 
-    _quantize_cross_encoder(cross_encoder)  # must not raise
+    _quantize_module(cross_encoder)
 
-    assert cross_encoder.model is original_model
+    assert cross_encoder.model is not original_model
 
 
-def test_quantize_skips_when_model_attribute_missing() -> None:
+def test_quantize_module_raises_when_model_attribute_missing() -> None:
     class _NoModelAttribute:
         pass
 
-    _quantize_cross_encoder(_NoModelAttribute())  # must not raise
+    with pytest.raises(AttributeError):
+        _quantize_module(_NoModelAttribute())
+
+
+def test_quantize_cross_encoder_applies_to_live_when_probe_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = _FakeCrossEncoder(fail_predict=False)
+    monkeypatch.setattr(models_module, "CrossEncoder", lambda *args, **kwargs: probe)
+
+    live = _FakeCrossEncoder(fail_predict=False)
+    original_live_model = live.model
+
+    _quantize_cross_encoder(live)
+
+    assert probe.predict_calls == 1  # the probe's own self-test ran
+    assert live.model is not original_live_model
+
+
+def test_quantize_cross_encoder_never_touches_live_when_probe_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: an earlier version of `_quantize_cross_encoder` quantized and
+    self-tested the *live* object directly, then reassigned `.model` back on
+    failure. That rollback did not actually restore working behavior in
+    production -- a real request through the "rolled back" live bundle crashed the
+    whole server on startup anyway. The fix validates on a disposable probe first
+    and must never call `.predict()` on, or reassign `.model` on, the live object
+    at all when the probe fails."""
+
+    probe = _FakeCrossEncoder(fail_predict=True)
+    monkeypatch.setattr(models_module, "CrossEncoder", lambda *args, **kwargs: probe)
+
+    live = _FakeCrossEncoder(fail_predict=True)
+    original_live_model = live.model
+
+    _quantize_cross_encoder(live)  # must not raise
+
+    assert live.model is original_live_model
+    assert live.predict_calls == 0  # the live object must never be exercised

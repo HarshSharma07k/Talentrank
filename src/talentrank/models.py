@@ -76,40 +76,63 @@ def _load_jobs_frame(jobs_clean_path: Path) -> pd.DataFrame:
 _QUANTIZE_SELF_TEST_PAIR = [["quantization self-test query", "quantization self-test passage"]]
 
 
-def _quantize_cross_encoder(cross_encoder: CrossEncoder) -> None:
-    """Apply dynamic int8 quantization to the cross-encoder's `Linear` layers, in
-    place, behind `settings.cross_encoder_quantize` (default off).
-
-    The `CrossEncoder.model` attribute path is version-specific in
-    sentence-transformers, per enhancements/08's own risk note -- verified here by
-    construction (`getattr` with a `None` default) rather than assumed. Measured
-    directly against this project's pinned versions (sentence-transformers 5.5.1,
-    transformers 5.10.2, torch 2.11.0): `torch.quantization.quantize_dynamic` runs
-    without raising and returns a same-shaped module, but a subsequent
-    `CrossEncoder.predict()` call raises deep inside
-    `BertForSequenceClassification.forward` (`AttributeError` from a `BatchEncoding`
-    object reaching `.size()`) -- quantization is not merely slower or lower-quality
-    here, it is non-functional. The self-test below is therefore load-bearing, not
-    speculative: it is the only thing standing between `cross_encoder_quantize=True`
-    and every subsequent request 500ing.
+def _quantize_module(cross_encoder: CrossEncoder) -> None:
+    """Replace `cross_encoder.model`'s `Linear` layers with dynamic int8 quantized
+    versions, in place. No validation -- callers must already know this is safe.
+    Split out from `_quantize_cross_encoder` so the exact same call can run once
+    against a disposable probe and, only if that succeeds, again against the real
+    object, without duplicating the `quantize_dynamic` call itself.
     """
 
     inner_model = getattr(cross_encoder, "model", None)
     if inner_model is None:
-        logger.warning("cross_encoder_quantize is set but CrossEncoder.model is unavailable; skipping quantization.")
-        return
+        raise AttributeError("CrossEncoder.model is not available on this sentence-transformers version")
+    cross_encoder.model = torch.quantization.quantize_dynamic(inner_model, {torch.nn.Linear}, dtype=torch.qint8)
 
+
+def _quantize_cross_encoder(cross_encoder: CrossEncoder) -> None:
+    """Apply dynamic int8 quantization to the live cross-encoder, behind
+    `settings.cross_encoder_quantize` (default off) -- but only after validating it
+    end-to-end on a disposable, independently-loaded probe instance first.
+
+    Measured directly against this project's pinned versions (sentence-transformers
+    5.5.1, transformers 5.10.2, torch 2.11.0): `torch.quantization.quantize_dynamic`
+    runs without raising, but a subsequent `CrossEncoder.predict()` call raises deep
+    inside `BertForSequenceClassification.forward` (`AttributeError` from a
+    `BatchEncoding` reaching `.size()`) -- quantization is not merely slower or
+    lower-quality here, it is non-functional.
+
+    A first version of this function quantized the *live* `cross_encoder` directly,
+    self-tested with `predict()`, and reassigned `cross_encoder.model` back to the
+    pre-quantization object on failure. That rollback did not actually restore
+    working behavior: a real request through the same (rolled-back) bundle during
+    startup `warmup()` crashed the process anyway with the identical error --
+    whatever this incompatibility corrupts is not confined to the `.model`
+    reference, so reassigning it back is not sufficient. This version never mutates
+    the live object at all unless an independent probe -- a second `CrossEncoder`
+    loaded from the same (already-cached-locally) weights -- has already gone
+    through the exact same quantize-then-predict sequence and survived it. A failed
+    probe is therefore a universal verdict on this library/version combination, not
+    an instance-specific fluke, so skipping the live object entirely on failure is
+    the only presently-known-safe behavior. Costs one extra local model load
+    (roughly a second, no network fetch) only when the flag is set.
+    """
+
+    settings = get_settings()
     try:
-        quantized = torch.quantization.quantize_dynamic(inner_model, {torch.nn.Linear}, dtype=torch.qint8)
-        cross_encoder.model = quantized
-        cross_encoder.predict(_QUANTIZE_SELF_TEST_PAIR)
+        probe = CrossEncoder(settings.cross_encoder_model_name, max_length=settings.cross_encoder_max_length)
+        _quantize_module(probe)
+        probe.predict(_QUANTIZE_SELF_TEST_PAIR)
     except Exception:
-        cross_encoder.model = inner_model
         logger.warning(
-            "cross_encoder_quantize is set but quantization failed its self-test against the "
-            "installed sentence-transformers/torch versions; continuing unquantized.",
+            "cross_encoder_quantize is set but quantization failed its self-test on an isolated "
+            "probe instance against the installed sentence-transformers/torch versions; the live "
+            "cross-encoder was left untouched, continuing unquantized.",
             exc_info=True,
         )
+        return
+
+    _quantize_module(cross_encoder)
 
 
 @lru_cache(maxsize=1)
