@@ -217,7 +217,13 @@ def cached_match(
 
     Key: `match:v1:{sha256(resume_text)[:16]}:{top_k}:{top_n}:{filters_digest}`. The
     `v1` prefix is deliberate: bump it to invalidate everything when a model, the
-    corpus profile, or the scoring changes.
+    corpus profile, or the scoring changes. The hash is over whitespace-normalized
+    text -- the same normalization `retrieve_only` applies before embedding -- so two
+    requests that are byte-different only in incidental whitespace (a common way for
+    a pasted resume, or a frontend template literal, to drift from a backend
+    constant) still collide on the same cache key. This is what makes `warmup`'s
+    cache-warm of `SAMPLE_RESUME` (enhancements/08) actually reliable rather than
+    contingent on two source files staying character-for-character identical.
 
     Both `get` and `set` are guarded here: a cache backend outage must degrade the
     service to slow, never to a 500.
@@ -225,7 +231,8 @@ def cached_match(
 
     settings = get_settings()
     cache = get_cache_backend()
-    resume_hash = hashlib.sha256(resume_text.encode("utf-8")).hexdigest()[:16]
+    normalized_text = " ".join(str(resume_text).split())
+    resume_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()[:16]
     key = f"match:v1:{resume_hash}:{top_k}:{top_n}:{_filters_digest(filters)}"
 
     start = time.perf_counter()

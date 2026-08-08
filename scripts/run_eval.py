@@ -5,6 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src.talentrank.config import get_settings
 from src.talentrank.pipeline import retrieve_only, match
 
 
@@ -13,7 +14,7 @@ def evaluate_system():
     try:
         eval_df = pd.read_parquet("data/processed/relevance_eval.parquet")
     except FileNotFoundError:
-        print("❌ Error: Could not find relevance_eval.parquet. Are you in the project root?")
+        print("Error: Could not find relevance_eval.parquet. Are you in the project root?")
         return
 
     unique_resumes = eval_df["resume_text"].unique()[:50]  # Evaluate on 50 resumes to save time
@@ -40,7 +41,10 @@ def evaluate_system():
         baseline_pred = [res["bi_encoder_score"] for res in baseline_results]
 
         # --- 2. Reranked: Bi-encoder + Cross-encoder ---
-        reranked_results = match(resume, top_k=50, top_n=10)
+        # `top_k` mirrors `settings.default_top_k` (not a hardcoded shortlist size) so
+        # this NDCG figure always pairs with whatever top_k the API is actually
+        # configured to run -- see enhancements/08's latency x NDCG matrix.
+        reranked_results = match(resume, top_k=get_settings().default_top_k, top_n=10)
 
         reranked_true = [true_labels_dict.get(str(res.get("job_id")), 0) for res in reranked_results]
 
@@ -64,7 +68,7 @@ def evaluate_system():
     print(f"NDCG@10 (With Reranker):        {final_reranked:.4f}")
     print("=================================================")
     if final_reranked > final_baseline:
-        print("✅ Success! The Cross-Encoder successfully improved your ranking precision.")
+        print("Success: the cross-encoder improved ranking precision over the bi-encoder baseline.")
 
 
 if __name__ == "__main__":

@@ -20,12 +20,17 @@ _INFERENCE_SEMAPHORE = threading.BoundedSemaphore(get_settings().max_concurrent_
 
 
 def _candidate_text(candidate: dict[str, Any]) -> str:
+    """Job requirements live at the top of a posting, not in the trailing EEO
+    paragraph -- truncating to `rerank_text_max_chars` loses little, and the model's
+    own `max_length` would have discarded everything past ~512 tokens anyway."""
+
     text = candidate.get("job_text")
     if text is None:
         text = candidate.get("text")
     if text is None:
         text = candidate.get("description")
-    return " ".join(str(text).split())
+    normalized = " ".join(str(text).split())
+    return normalized[: get_settings().rerank_text_max_chars]
 
 
 @torch.inference_mode()
@@ -52,7 +57,7 @@ def rerank(
     if top_n <= 0 or not candidates:
         return []
 
-    ce = model or CrossEncoder(CROSS_ENCODER_MODEL_NAME)
+    ce = model or CrossEncoder(CROSS_ENCODER_MODEL_NAME, max_length=get_settings().cross_encoder_max_length)
     pairs = [[query, _candidate_text(candidate)] for candidate in candidates]
 
     sem = semaphore or _INFERENCE_SEMAPHORE
