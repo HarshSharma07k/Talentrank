@@ -110,3 +110,15 @@ class JobFamilyCount(BaseModel):
     family: str  # "INFORMATION-TECHNOLOGY"
     label: str  # "Information Technology" (reuse formatCategory's logic server-side)
     count: int
+
+
+class ExtractTextResponse(BaseModel):
+    """Response for `POST /extract-text`. See enhancements/06 -- deliberately a
+    separate endpoint from `/match` so the user sees and edits this text before it
+    is ever matched."""
+
+    text: str
+    char_count: int
+    page_count: int | None  # None for DOCX
+    filename: str
+    truncated: bool

@@ -10,7 +10,7 @@ from typing import AsyncIterator
 import uuid
 
 import anyio
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,9 +18,19 @@ import torch
 
 from src.talentrank import pipeline as pipeline_module
 from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
+from src.talentrank.extract import (
+    EmptyExtractionError,
+    EncryptedPdfError,
+    UnsupportedFileTypeError,
+    extract_text_from_upload,
+)
 from src.talentrank.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from src.talentrank.models import ModelBundle, get_model_bundle, warmup
-from src.talentrank.schemas import HealthResponse, JobFamilyCount, MatchRequest, MatchResponse
+from src.talentrank.schemas import ExtractTextResponse, HealthResponse, JobFamilyCount, MatchRequest, MatchResponse
+
+# Bounds each chunked read from the upload stream -- see `extract_text` below, which
+# reads in chunks rather than `await file.read()`-ing an unbounded body into memory.
+_UPLOAD_CHUNK_BYTES = 1_048_576
 
 logger = logging.getLogger("talentrank.api")
 if not logger.handlers:
@@ -159,6 +169,49 @@ def job_families(bundle: ModelBundle = Depends(get_model_bundle)) -> list[JobFam
     loaded frame. Never hardcode this list client-side -- see enhancements/05."""
 
     return bundle.families
+
+
+@app.post("/extract-text", response_model=ExtractTextResponse)
+async def extract_text(file: UploadFile = File(...)) -> ExtractTextResponse:
+    """Extract resume text from an uploaded PDF or DOCX. Deliberately separate from
+    `/match` -- see enhancements/06 -- so the user can see and edit the extracted
+    text before anything is matched, and so `/match`'s cache key stays a hash of
+    text rather than of file bytes.
+
+    Reads the upload in bounded chunks (never `await file.read()` the whole body)
+    so an oversized upload is rejected before it fully lands in memory.
+    """
+
+    settings = get_settings()
+    filename = file.filename or "upload"
+
+    chunks: list[bytes] = []
+    total_bytes = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > settings.max_upload_bytes:
+            raise HTTPException(413, detail=f"File exceeds the {settings.max_upload_bytes}-byte upload limit.")
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
+
+    try:
+        result = extract_text_from_upload(filename, content)
+    except UnsupportedFileTypeError as exc:
+        raise HTTPException(415, detail=str(exc)) from exc
+    except (EncryptedPdfError, EmptyExtractionError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+    return ExtractTextResponse(
+        text=result.text,
+        char_count=result.char_count,
+        page_count=result.page_count,
+        filename=filename,
+        truncated=result.truncated,
+    )
 
 
 @app.post("/retrieve", response_model=MatchResponse)
