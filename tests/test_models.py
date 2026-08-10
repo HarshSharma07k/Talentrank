@@ -31,6 +31,7 @@ def test_bundle_is_singleton(
     monkeypatch.setattr(models_module, "CrossEncoder", lambda *args, **kwargs: object())
     monkeypatch.setattr(models_module.FaissIndexManager, "load_index", classmethod(lambda cls, path: tiny_index))
     monkeypatch.setattr(models_module, "_load_jobs_frame", lambda jobs_clean_path: tiny_jobs_frame)
+    monkeypatch.setattr(models_module, "_load_idf", lambda term_idf_path: {})
 
     first = models_module.get_model_bundle()
     second = models_module.get_model_bundle()

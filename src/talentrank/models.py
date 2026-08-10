@@ -8,6 +8,7 @@ module globals from `lifespan` and reading the FAISS index twice. See enhancemen
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 import time
 
@@ -71,6 +72,21 @@ def _load_jobs_frame(jobs_clean_path: Path) -> pd.DataFrame:
     df["job_id"] = df["job_id"].astype(str)
     df.set_index("job_id", inplace=True)
     return df
+
+
+def _load_idf(term_idf_path: Path) -> dict[str, float]:
+    """Load the offline-built IDF map (see `scripts/build_explain_assets.py`).
+
+    Raised as a clear `FileNotFoundError` at startup -- the same one `api.py`'s
+    lifespan already catches for a missing corpus -- rather than surfacing as a
+    `KeyError` deep inside `explain.explain_candidate` on the first real request.
+    """
+
+    if not term_idf_path.exists():
+        raise FileNotFoundError(f"Term IDF file does not exist: {term_idf_path}. Run scripts/build_explain_assets.py.")
+
+    with term_idf_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 _QUANTIZE_SELF_TEST_PAIR = [["quantization self-test query", "quantization self-test passage"]]
@@ -159,6 +175,7 @@ def get_model_bundle() -> ModelBundle:
     index = FaissIndexManager.load_index(index_path)
 
     jobs = _load_jobs_frame(Path(settings.jobs_clean_path))
+    idf = _load_idf(Path(settings.term_idf_path))
 
     return ModelBundle(
         device=device,
@@ -166,7 +183,7 @@ def get_model_bundle() -> ModelBundle:
         cross_encoder=cross_encoder,
         index=index,
         jobs=jobs,
-        idf={},
+        idf=idf,
         families=[],
         loaded_at=time.monotonic(),
         warm=False,

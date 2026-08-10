@@ -174,4 +174,5 @@ def match_resume(request: MatchRequest, bundle: ModelBundle = Depends(get_model_
         top_n=request.top_n,
         filters=request.filters,
         bundle=bundle,
+        explain=request.explain,
     )

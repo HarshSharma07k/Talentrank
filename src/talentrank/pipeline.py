@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import DEFAULT_TOP_K, DEFAULT_TOP_N, get_settings
 from src.talentrank.embeddings import TextEmbeddingEncoder
+from src.talentrank.explain import build_resume_terms, explain_candidate
 from src.talentrank.models import get_model_bundle
 from src.talentrank.rerank import rerank
-from src.talentrank.schemas import JobMatch, MatchFilters, MatchResponse, ScoreBreakdown
+from src.talentrank.schemas import Explanation, JobMatch, MatchFilters, MatchResponse, ScoreBreakdown
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -103,10 +104,16 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
-def _to_job_match(candidate: dict[str, Any], rank: int, cross_encoder_score: float) -> JobMatch:
+def _to_job_match(
+    candidate: dict[str, Any],
+    rank: int,
+    cross_encoder_score: float,
+    explanation: Explanation | None = None,
+) -> JobMatch:
     settings = get_settings()
     bi_encoder_score = float(candidate.get("bi_encoder_score", 0.0))
     description = str(candidate.get("description", ""))[: settings.description_max_chars]
+    skill_overlap = explanation.overlap_score if explanation is not None else 0.0
 
     return JobMatch(
         job_id=int(candidate["job_id"]),
@@ -121,9 +128,9 @@ def _to_job_match(candidate: dict[str, Any], rank: int, cross_encoder_score: flo
             bi_encoder=bi_encoder_score,
             cross_encoder=cross_encoder_score,
             cross_encoder_probability=_sigmoid(cross_encoder_score),
-            skill_overlap=0.0,  # real overlap lands in enhancements/04
+            skill_overlap=skill_overlap,
         ),
-        explanation=None,  # lands in enhancements/04
+        explanation=explanation,
         retrieval_rank=int(candidate.get("retrieval_rank", rank)),
         rank=rank,
     )
@@ -174,16 +181,34 @@ def retrieve_response(resume_text: str, top_k: int, top_n: int, bundle: ModelBun
     )
 
 
-def match_response(resume_text: str, top_k: int, top_n: int, bundle: ModelBundle | None = None) -> MatchResponse:
+def match_response(
+    resume_text: str,
+    top_k: int,
+    top_n: int,
+    bundle: ModelBundle | None = None,
+    explain: bool = True,
+) -> MatchResponse:
     """Stage 2: retrieval + cross-encoder rerank, uncached. `cached_match` is the
-    cache-fronted wrapper around this -- call this directly only to bypass the cache."""
+    cache-fronted wrapper around this -- call this directly only to bypass the cache.
+
+    `explain` gates the lexical evidence layer (enhancements/04). It runs only on the
+    `top_n` reranked results, never the `top_k` shortlist, and only when set -- so
+    `/retrieve` and eval/benchmark call sites can skip it entirely.
+    """
 
     bundle = bundle or get_model_bundle()
     start = time.perf_counter()
     candidates = retrieve_only(resume_text, top_k=top_k, bundle=bundle)
     ranked = rerank(query=resume_text, candidates=candidates, top_n=top_n, model=bundle.cross_encoder)
+
+    resume_terms = build_resume_terms(resume_text) if explain and ranked else None
     results = [
-        _to_job_match(c, rank=i, cross_encoder_score=float(c.get("cross_encoder_score", 0.0)))
+        _to_job_match(
+            c,
+            rank=i,
+            cross_encoder_score=float(c.get("cross_encoder_score", 0.0)),
+            explanation=explain_candidate(resume_terms, c, bundle.idf) if resume_terms is not None else None,
+        )
         for i, c in enumerate(ranked, start=1)
     ]
 
@@ -211,19 +236,23 @@ def cached_match(
     top_n: int,
     filters: MatchFilters | None = None,
     bundle: ModelBundle | None = None,
+    explain: bool = True,
 ) -> MatchResponse:
     """`match_response()`, fronted by the process cache. The only call site that
     touches the cache -- see enhancements/07.
 
-    Key: `match:v1:{sha256(resume_text)[:16]}:{top_k}:{top_n}:{filters_digest}`. The
-    `v1` prefix is deliberate: bump it to invalidate everything when a model, the
-    corpus profile, or the scoring changes. The hash is over whitespace-normalized
-    text -- the same normalization `retrieve_only` applies before embedding -- so two
-    requests that are byte-different only in incidental whitespace (a common way for
-    a pasted resume, or a frontend template literal, to drift from a backend
-    constant) still collide on the same cache key. This is what makes `warmup`'s
-    cache-warm of `SAMPLE_RESUME` (enhancements/08) actually reliable rather than
-    contingent on two source files staying character-for-character identical.
+    Key: `match:v1:{sha256(resume_text)[:16]}:{top_k}:{top_n}:{filters_digest}:{explain}`.
+    The `v1` prefix is deliberate: bump it to invalidate everything when a model, the
+    corpus profile, or the scoring changes. `explain` is part of the key (not just an
+    argument to the uncached path) because it changes the response shape -- a hit
+    from a request that skipped explanations must never be replayed to one that
+    asked for them. The hash is over whitespace-normalized text -- the same
+    normalization `retrieve_only` applies before embedding -- so two requests that
+    are byte-different only in incidental whitespace (a common way for a pasted
+    resume, or a frontend template literal, to drift from a backend constant) still
+    collide on the same cache key. This is what makes `warmup`'s cache-warm of
+    `SAMPLE_RESUME` (enhancements/08) actually reliable rather than contingent on two
+    source files staying character-for-character identical.
 
     Both `get` and `set` are guarded here: a cache backend outage must degrade the
     service to slow, never to a 500.
@@ -233,7 +262,7 @@ def cached_match(
     cache = get_cache_backend()
     normalized_text = " ".join(str(resume_text).split())
     resume_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()[:16]
-    key = f"match:v1:{resume_hash}:{top_k}:{top_n}:{_filters_digest(filters)}"
+    key = f"match:v1:{resume_hash}:{top_k}:{top_n}:{_filters_digest(filters)}:{int(explain)}"
 
     start = time.perf_counter()
     cached_bytes: bytes | None = None
@@ -251,7 +280,7 @@ def cached_match(
         response.took_ms = (time.perf_counter() - start) * 1000
         return response
 
-    response = match_response(resume_text, top_k=top_k, top_n=top_n, bundle=bundle)
+    response = match_response(resume_text, top_k=top_k, top_n=top_n, bundle=bundle, explain=explain)
 
     try:
         cache.set(key, response.model_dump_json().encode("utf-8"), ttl_seconds=settings.cache_ttl_seconds)

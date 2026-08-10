@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 5_000_000
     description_max_chars: int = 1200
     explain_max_terms: int = 12
+    explain_min_idf: float = 1.0  # floor for a shared term to be highlightable
     filter_overfetch_factor: int = 3
 
     # Demo corpus.

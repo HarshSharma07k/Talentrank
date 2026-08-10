@@ -1,9 +1,9 @@
 """Pydantic request/response models for the TalentRank API.
 
-Several fields here (`job_family`, `explanation`, `scores.skill_overlap`) describe
-features that later enhancement docs implement -- they are always present with a
-stable placeholder value (never omitted) so the response shape doesn't change again
-once the frontend depends on it. See enhancements/02.
+`job_family` still describes a feature a later enhancement doc implements (`05`) --
+it is always present with a stable placeholder value (`"OTHER"`) so the response
+shape doesn't change again once the frontend depends on it. `explanation` and
+`scores.skill_overlap` are real as of `04`. See enhancements/02.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class MatchRequest(BaseModel):
     top_k: int = Field(default=_settings.default_top_k, ge=1, le=_settings.max_top_k)
     top_n: int = Field(default=_settings.default_top_n, ge=1, le=_settings.max_top_n)
     filters: MatchFilters = Field(default_factory=MatchFilters)
-    explain: bool = True  # not yet applied -- see enhancements/04
+    explain: bool = True  # gates the enhancements/04 lexical evidence layer
 
 
 class ScoreBreakdown(BaseModel):
@@ -40,7 +40,7 @@ class ScoreBreakdown(BaseModel):
     bi_encoder: float  # cosine in [-1, 1]: normalized embeddings + inner product
     cross_encoder: float  # raw logit, kept for transparency
     cross_encoder_probability: float  # sigmoid(logit) in [0, 1] -- the display number
-    skill_overlap: float  # [0, 1]; always 0.0 until enhancements/04 lands
+    skill_overlap: float  # [0, 1]; from Explanation.overlap_score when explain=True, else 0.0
 
 
 class MatchedTerm(BaseModel):
@@ -49,7 +49,8 @@ class MatchedTerm(BaseModel):
 
 
 class Explanation(BaseModel):
-    """Skill/term overlap explanation. Not yet produced -- see enhancements/04."""
+    """Lexical evidence layer built by `explain.explain_candidate` (enhancements/04).
+    `None` on a `JobMatch` only when the request set `explain=False`."""
 
     matched_skills: list[str]
     missing_skills: list[str]
