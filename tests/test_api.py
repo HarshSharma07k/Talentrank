@@ -85,6 +85,49 @@ def test_retrieve_stage_field(client: TestClient) -> None:
     assert all(r["cross_encoder_score"] == 0.0 for r in body["results"])
 
 
+def test_job_families_endpoint(client: TestClient) -> None:
+    response = client.get("/job-families")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body  # fake_bundle's 20 synthetic titles produce a non-empty facet list
+    assert sum(row["count"] for row in body) == 20
+    assert body[-1]["family"] == "OTHER"  # OTHER is always forced last, regardless of its count
+    assert body[-1]["label"] == "Other"
+    counts = [row["count"] for row in body[:-1]]
+    assert counts == sorted(counts, reverse=True)
+    public_relations = next(row for row in body if row["family"] == "PUBLIC-RELATIONS")
+    assert public_relations["label"] == "Public Relations"
+
+
+def test_match_family_filter(client: TestClient) -> None:
+    response = client.post(
+        "/match",
+        json={"resume_text": "x" * 50, "top_k": 20, "top_n": 20, "filters": {"job_families": ["HEALTHCARE"]}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"]
+    assert {r["job_family"] for r in body["results"]} == {"HEALTHCARE"}
+    assert body["filtered_candidates"] <= body["total_candidates"]
+
+
+def test_match_family_filter_empty_result_stays_honest(client: TestClient) -> None:
+    """A family with zero matches in the corpus returns an empty (not erroring)
+    result list, with counts that say so honestly rather than silently."""
+
+    response = client.post(
+        "/match",
+        json={"resume_text": "x" * 50, "top_k": 20, "top_n": 20, "filters": {"job_families": ["AGRICULTURE"]}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"] == []
+    assert body["filtered_candidates"] == 0
+
+
 def test_missing_artifacts_returns_503(client: TestClient) -> None:
     from src.talentrank.api import app
 

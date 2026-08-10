@@ -228,7 +228,8 @@ def load_jobs_csv(source: Path | str | None = None) -> pd.DataFrame:
     jobs = jobs.loc[jobs["text"].ne("")].copy()
     jobs = jobs.drop_duplicates(subset=["job_id", "text"]).reset_index(drop=True)
     jobs["job_category"] = jobs["job_title"].map(_normalize_category_value)
-    return jobs[["job_id", "job_title", "description", "skills", "text", "job_category"]]
+    jobs["job_family"] = jobs["job_title"].map(derive_job_family)
+    return jobs[["job_id", "job_title", "description", "skills", "text", "job_category", "job_family"]]
 
 
 def load_resumes_csv(source: Path | str | None = None) -> pd.DataFrame:
@@ -251,6 +252,30 @@ def load_resumes_csv(source: Path | str | None = None) -> pd.DataFrame:
     resumes = resumes.drop_duplicates(subset=["resume_id", "text"]).reset_index(drop=True)
     resumes["resume_category"] = resumes["category"].map(_normalize_category_value)
     return resumes[["resume_id", "category", "resume_category", "resume_text_raw", "text"]]
+
+
+def derive_job_family(job_title: str) -> str:
+    """First-match-wins over `CATEGORY_KEYWORDS` against the lowercased title, else
+    `"OTHER"`. Reuses the exact pattern machinery `label_relevance` already builds --
+    see enhancements/05: `job_category` (the title uppercased) has 70,518 distinct
+    values and cannot be a filter facet, so this coarse ~24-bucket family is the real
+    facet instead.
+
+    **Order-sensitive**: `CATEGORY_KEYWORDS` is a dict and iteration follows
+    declaration order, so a title matching two categories' keywords is assigned to
+    whichever is declared first. Changing the dict's order or contents changes this
+    function's output; re-measure and append a new row to `measured-facts.md` if you do.
+    """
+
+    title = _normalize_text(job_title)
+    if not title:
+        return "OTHER"
+
+    for category in CATEGORY_KEYWORDS:
+        if _cached_category_pattern(category).search(title):
+            return category
+
+    return "OTHER"
 
 
 def label_relevance(resume_category: str, job_title: str) -> int:

@@ -13,6 +13,7 @@ from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import DEFAULT_TOP_K, DEFAULT_TOP_N, get_settings
 from src.talentrank.embeddings import TextEmbeddingEncoder
 from src.talentrank.explain import build_resume_terms, explain_candidate
+from src.talentrank.filters import apply_filters
 from src.talentrank.models import get_model_bundle
 from src.talentrank.rerank import rerank
 from src.talentrank.schemas import Explanation, JobMatch, MatchFilters, MatchResponse, ScoreBreakdown
@@ -121,7 +122,7 @@ def _to_job_match(
         description=description,
         skills=str(candidate.get("skills", "") or ""),
         job_category=str(candidate.get("job_category", "")),
-        job_family="OTHER",  # real families land in enhancements/05 + /09
+        job_family=str(candidate.get("job_family") or "OTHER"),
         bi_encoder_score=bi_encoder_score,
         cross_encoder_score=cross_encoder_score,
         scores=ScoreBreakdown(
@@ -142,6 +143,7 @@ def _build_match_response(
     top_k: int,
     top_n: int,
     total_candidates: int,
+    filtered_candidates: int,
     took_ms: float,
     cached: bool,
     bundle: ModelBundle,
@@ -152,11 +154,27 @@ def _build_match_response(
         top_k=top_k,
         top_n=top_n,
         total_candidates=total_candidates,
-        filtered_candidates=total_candidates,  # no filtering yet -- see enhancements/05
+        filtered_candidates=filtered_candidates,
         took_ms=took_ms,
         cached=cached,
         corpus_size=len(bundle.jobs),
     )
+
+
+def _effective_retrieval_top_k(top_k: int, filters: MatchFilters | None) -> int:
+    """Over-fetch from FAISS only when a family filter is active (enhancements/05).
+
+    A family filter applied *after* a plain `top_k` retrieval would routinely narrow
+    the shortlist to a handful of candidates (or zero, for a sparse family like
+    AGRICULTURE) before rerank ever runs. Over-fetching by `filter_overfetch_factor`
+    gives the family filter a large-enough pool to survive on. `min_score` does not
+    trigger over-fetch: it depends on `cross_encoder_score`, which does not exist
+    until after rerank, so there is nothing to over-fetch for at retrieval time.
+    """
+
+    if filters is not None and filters.job_families:
+        return top_k * get_settings().filter_overfetch_factor
+    return top_k
 
 
 def retrieve_response(resume_text: str, top_k: int, top_n: int, bundle: ModelBundle | None = None) -> MatchResponse:
@@ -175,6 +193,7 @@ def retrieve_response(resume_text: str, top_k: int, top_n: int, bundle: ModelBun
         top_k=top_k,
         top_n=top_n,
         total_candidates=len(candidates),
+        filtered_candidates=len(candidates),  # /retrieve never filters -- see enhancements/05
         took_ms=(time.perf_counter() - start) * 1000,
         cached=False,
         bundle=bundle,
@@ -187,6 +206,7 @@ def match_response(
     top_n: int,
     bundle: ModelBundle | None = None,
     explain: bool = True,
+    filters: MatchFilters | None = None,
 ) -> MatchResponse:
     """Stage 2: retrieval + cross-encoder rerank, uncached. `cached_match` is the
     cache-fronted wrapper around this -- call this directly only to bypass the cache.
@@ -194,12 +214,31 @@ def match_response(
     `explain` gates the lexical evidence layer (enhancements/04). It runs only on the
     `top_n` reranked results, never the `top_k` shortlist, and only when set -- so
     `/retrieve` and eval/benchmark call sites can skip it entirely.
+
+    `filters` (enhancements/05) is applied twice through the same `apply_filters`
+    call, once on each side of rerank: family filtering before (so a filtered-out
+    candidate never pays for a cross-encoder pass), min-score filtering after (it
+    needs `cross_encoder_score`, which only exists post-rerank). See `filters.py`'s
+    docstring for why one function is safe to call at both points. `top_k` itself is
+    over-fetched from FAISS when a family filter is active -- see
+    `_effective_retrieval_top_k`.
     """
 
     bundle = bundle or get_model_bundle()
+    active_filters = filters if filters is not None else MatchFilters()
     start = time.perf_counter()
-    candidates = retrieve_only(resume_text, top_k=top_k, bundle=bundle)
-    ranked = rerank(query=resume_text, candidates=candidates, top_n=top_n, model=bundle.cross_encoder)
+
+    retrieval_top_k = _effective_retrieval_top_k(top_k, active_filters)
+    candidates = retrieve_only(resume_text, top_k=retrieval_top_k, bundle=bundle)
+    total_candidates = len(candidates)
+
+    family_filtered = apply_filters(candidates, active_filters)
+    ranked_all = rerank(
+        query=resume_text, candidates=family_filtered, top_n=len(family_filtered), model=bundle.cross_encoder
+    )
+    score_filtered = apply_filters(ranked_all, active_filters)
+    filtered_candidates = len(score_filtered)
+    ranked = score_filtered[:top_n]
 
     resume_terms = build_resume_terms(resume_text) if explain and ranked else None
     results = [
@@ -217,7 +256,8 @@ def match_response(
         stage="rerank",
         top_k=top_k,
         top_n=top_n,
-        total_candidates=len(candidates),
+        total_candidates=total_candidates,
+        filtered_candidates=filtered_candidates,
         took_ms=(time.perf_counter() - start) * 1000,
         cached=False,
         bundle=bundle,
@@ -280,7 +320,7 @@ def cached_match(
         response.took_ms = (time.perf_counter() - start) * 1000
         return response
 
-    response = match_response(resume_text, top_k=top_k, top_n=top_n, bundle=bundle, explain=explain)
+    response = match_response(resume_text, top_k=top_k, top_n=top_n, bundle=bundle, explain=explain, filters=filters)
 
     try:
         cache.set(key, response.model_dump_json().encode("utf-8"), ttl_seconds=settings.cache_ttl_seconds)

@@ -15,8 +15,9 @@ from fastapi.testclient import TestClient
 
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import get_settings
+from src.talentrank.data import derive_job_family
 from src.talentrank.index import FaissIndexManager
-from src.talentrank.models import ModelBundle, get_model_bundle
+from src.talentrank.models import ModelBundle, _compute_job_families, get_model_bundle
 
 _LRU_CACHED_GETTERS = (
     get_settings,
@@ -121,6 +122,7 @@ def tiny_jobs_frame() -> pd.DataFrame:
             "skills": ["" for _ in _JOB_TITLES],
             "text": descriptions,
             "job_category": [title.upper() for title in _JOB_TITLES],
+            "job_family": [derive_job_family(title) for title in _JOB_TITLES],
         }
     )
 
@@ -159,7 +161,7 @@ def fake_bundle(
         index=tiny_index,
         jobs=indexed_jobs,
         idf={},
-        families=[],
+        families=_compute_job_families(indexed_jobs),
         loaded_at=time.monotonic(),
         warm=True,
     )
