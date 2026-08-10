@@ -71,6 +71,20 @@ export interface HealthResponse {
   uptime_seconds: number;
 }
 
+export interface JobFamilyCount {
+  family: string;
+  label: string;
+  count: number;
+}
+
+export interface ExtractTextResponse {
+  text: string;
+  char_count: number;
+  page_count: number | null;
+  filename: string;
+  truncated: boolean;
+}
+
 const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
 
@@ -109,8 +123,49 @@ export async function checkHealth(signal?: AbortSignal): Promise<HealthResponse>
   return (await response.json()) as HealthResponse;
 }
 
-async function postMatchRequest(path: "/match" | "/retrieve", resumeText: string, signal?: AbortSignal): Promise<MatchResponse> {
+export async function getJobFamilies(signal?: AbortSignal): Promise<JobFamilyCount[]> {
+  const response = await fetch(`${API_BASE_URL}/job-families`, { signal });
+  if (!response.ok) {
+    throw new ApiError(await parseErrorMessage(response), response.status);
+  }
+  return (await response.json()) as JobFamilyCount[];
+}
+
+export async function extractText(file: File, signal?: AbortSignal): Promise<ExtractTextResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/extract-text`, {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new ApiError(await parseErrorMessage(response), response.status);
+  }
+
+  return (await response.json()) as ExtractTextResponse;
+}
+
+export interface MatchOptions {
+  topK?: number;
+  topN?: number;
+  filters?: MatchFilters;
+  explain?: boolean;
+}
+
+async function postMatchRequest(
+  path: "/match" | "/retrieve",
+  resumeText: string,
+  options: MatchOptions,
+  signal?: AbortSignal,
+): Promise<MatchResponse> {
   const body: MatchRequestBody = { resume_text: resumeText };
+  if (options.topK !== undefined) body.top_k = options.topK;
+  if (options.topN !== undefined) body.top_n = options.topN;
+  if (options.filters !== undefined) body.filters = options.filters;
+  if (options.explain !== undefined) body.explain = options.explain;
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
@@ -126,10 +181,18 @@ async function postMatchRequest(path: "/match" | "/retrieve", resumeText: string
   return (await response.json()) as MatchResponse;
 }
 
-export async function matchResume(resumeText: string, signal?: AbortSignal): Promise<MatchResponse> {
-  return postMatchRequest("/match", resumeText, signal);
+export async function matchResume(
+  resumeText: string,
+  options: MatchOptions = {},
+  signal?: AbortSignal,
+): Promise<MatchResponse> {
+  return postMatchRequest("/match", resumeText, options, signal);
 }
 
-export async function retrieveOnly(resumeText: string, signal?: AbortSignal): Promise<MatchResponse> {
-  return postMatchRequest("/retrieve", resumeText, signal);
+export async function retrieveOnly(
+  resumeText: string,
+  options: MatchOptions = {},
+  signal?: AbortSignal,
+): Promise<MatchResponse> {
+  return postMatchRequest("/retrieve", resumeText, options, signal);
 }
