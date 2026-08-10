@@ -117,6 +117,26 @@ pip install -r requirements.txt
 uvicorn src.talentrank.api:app --reload
 ```
 
+The server auto-detects a CUDA GPU at startup (`torch.cuda.is_available()`) and
+falls back to CPU otherwise — `/health`'s `device` field reports which one is
+active. **`pip install -r requirements.txt` alone always installs the CPU-only
+`torch` wheel on Windows**, even on a CUDA-capable machine, because the
+requirements file pins a version, not a build variant. To use a local GPU,
+reinstall `torch` from PyTorch's CUDA index afterward:
+
+```bash
+pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+```
+
+Measured on this project's own hardware (an RTX 3050 Laptop GPU, 4.29 GB VRAM):
+GPU was *not* faster for `/match` — 166.8 ms p50 versus 138.7 ms p50 on CPU, for
+the shipped `top_k=30` config. A single request's cross-encoder pass over only 30
+candidate pairs is small enough that CUDA kernel-launch and host↔device transfer
+overhead outweighs the GPU's compute advantage on a model this size. GPU is
+useful for batch/offline work (e.g. `scripts/build_index.py` encoding the full
+corpus) more than for this single-request serving path. See
+`.claude/reference/measured-facts.md` for the full numbers.
+
 ### 3. Query the API
 
 ```bash
