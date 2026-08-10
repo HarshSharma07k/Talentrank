@@ -1,5 +1,8 @@
+import type { FormEvent, KeyboardEvent } from "react";
 import { useId } from "react";
 import { SAMPLE_RESUME } from "../lib/sampleResume";
+import { ResumeDropzone } from "./ResumeDropzone";
+import { SearchControls, type SearchControlsValue } from "./SearchControls";
 
 const MIN_LENGTH = 40;
 
@@ -8,20 +11,31 @@ interface ResumeFormProps {
   onResumeTextChange: (value: string) => void;
   onSubmit: () => void;
   loading: boolean;
+  searchControls: SearchControlsValue;
+  onSearchControlsChange: (value: SearchControlsValue) => void;
+  resultSummary: { filtered: number; total: number } | null;
 }
 
-export function ResumeForm({ resumeText, onResumeTextChange, onSubmit, loading }: ResumeFormProps) {
+export function ResumeForm({
+  resumeText,
+  onResumeTextChange,
+  onSubmit,
+  loading,
+  searchControls,
+  onSearchControlsChange,
+  resultSummary,
+}: ResumeFormProps) {
   const textareaId = useId();
   const trimmedLength = resumeText.trim().length;
   const tooShort = trimmedLength > 0 && trimmedLength < MIN_LENGTH;
   const canSubmit = trimmedLength >= MIN_LENGTH && !loading;
 
-  function handleSubmit(event: React.FormEvent) {
+  function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (canSubmit) onSubmit();
   }
 
-  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && canSubmit) {
       event.preventDefault();
       onSubmit();
@@ -42,6 +56,10 @@ export function ResumeForm({ resumeText, onResumeTextChange, onSubmit, loading }
           Load sample resume
         </button>
       </div>
+
+      {/* Puts extracted text into this same textarea rather than skipping straight
+          to a match -- the user must see and edit it first. See enhancements/06. */}
+      <ResumeDropzone onExtracted={(text) => onResumeTextChange(text)} />
 
       <textarea
         id={textareaId}
@@ -76,6 +94,8 @@ export function ResumeForm({ resumeText, onResumeTextChange, onSubmit, loading }
           {loading ? "Matching…" : "Find matching jobs"}
         </button>
       </div>
+
+      <SearchControls value={searchControls} onChange={onSearchControlsChange} resultSummary={resultSummary} />
     </form>
   );
 }

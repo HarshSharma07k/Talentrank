@@ -1,14 +1,19 @@
+import { useLayoutEffect, useRef } from "react";
 import type { JobMatch } from "../lib/api";
+import { captureRects, playFlip, type Rect } from "../lib/flip";
 import { JobCard } from "./JobCard";
 
-function scoreRange(values: number[]): [number, number] {
-  if (values.length === 0) return [0, 1];
-  return [Math.min(...values), Math.max(...values)];
-}
-
 export function ResultsList({ results }: { results: JobMatch[] }) {
-  const biScoreRange = scoreRange(results.map((job) => job.bi_encoder_score));
-  const crossScoreRange = scoreRange(results.map((job) => job.cross_encoder_score));
+  const elementsRef = useRef(new Map<string, HTMLLIElement>());
+  const previousRectsRef = useRef<Map<string, Rect>>(new Map());
+
+  // Runs after every commit that changes `results` (e.g. the rerank stage replacing
+  // the shortlist, or a client-side sort). Plays the reorder from whatever position
+  // each surviving card held a moment ago to its new one.
+  useLayoutEffect(() => {
+    playFlip(elementsRef.current, previousRectsRef.current);
+    previousRectsRef.current = captureRects(elementsRef.current);
+  }, [results]);
 
   return (
     <ul className="space-y-3">
@@ -17,8 +22,11 @@ export function ResultsList({ results }: { results: JobMatch[] }) {
           key={job.job_id}
           job={job}
           rank={index + 1}
-          biScoreRange={biScoreRange}
-          crossScoreRange={crossScoreRange}
+          elementRef={(element) => {
+            const key = String(job.job_id);
+            if (element) elementsRef.current.set(key, element);
+            else elementsRef.current.delete(key);
+          }}
         />
       ))}
     </ul>
