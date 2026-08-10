@@ -1,6 +1,7 @@
 # TalentRank — Engineering Brief
 Project: Semantic resume-to-job matching and ranking service.
 Tech stack: Python 3.13, sentence-transformers, faiss-cpu (IndexHNSWFlat/IndexIVFFlat), fastapi, uvicorn, pydantic, pandas, numpy, scikit-learn, pytest, Docker.
+Persistence (from Phase 11, see .claude/enhancements/19-persistence-foundation.md): SQLAlchemy 2.0 async + Alembic; SQLite locally and in tests, managed PostgreSQL for the hosted demo. Auth is email/password with Argon2id and opaque server-side session tokens — no JWT. Anonymous access to the match endpoints stays supported.
 Models: bi-encoder: all-MiniLM-L6-v2; cross-encoder: ms-marco-MiniLM-L-6-v2.
 
 RULES:
