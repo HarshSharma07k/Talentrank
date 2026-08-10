@@ -20,7 +20,7 @@ from src.talentrank import pipeline as pipeline_module
 from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
 from src.talentrank.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from src.talentrank.models import ModelBundle, get_model_bundle, warmup
-from src.talentrank.schemas import HealthResponse, MatchRequest, MatchResponse
+from src.talentrank.schemas import HealthResponse, JobFamilyCount, MatchRequest, MatchResponse
 
 logger = logging.getLogger("talentrank.api")
 if not logger.handlers:
@@ -151,6 +151,14 @@ def health(bundle: ModelBundle = Depends(get_model_bundle)) -> HealthResponse:
         cache_backend=settings.cache_backend,
         uptime_seconds=time.monotonic() - START_TIME,
     )
+
+
+@app.get("/job-families", response_model=list[JobFamilyCount])
+def job_families(bundle: ModelBundle = Depends(get_model_bundle)) -> list[JobFamilyCount]:
+    """The family facet, with measured counts, computed once at startup from the
+    loaded frame. Never hardcode this list client-side -- see enhancements/05."""
+
+    return bundle.families
 
 
 @app.post("/retrieve", response_model=MatchResponse)

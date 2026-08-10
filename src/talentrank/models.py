@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import re
 import time
 
 import pandas as pd
@@ -59,7 +60,7 @@ class ModelBundle:
     index: FaissIndexManager
     jobs: pd.DataFrame
     idf: dict[str, float]  # always {} until enhancements/04 builds term_idf.json
-    families: list[JobFamilyCount]  # always [] until enhancements/05 + /09 add job_family
+    families: list[JobFamilyCount]  # computed at startup from the loaded frame's job_family column
     loaded_at: float
     warm: bool = False
 
@@ -87,6 +88,31 @@ def _load_idf(term_idf_path: Path) -> dict[str, float]:
 
     with term_idf_path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _format_family_label(family: str) -> str:
+    """Mirror `frontend/src/lib/format.ts`'s `formatCategory` server-side: split on
+    `-`/`_`, keep each word's first character as-is and lowercase the rest, join with
+    spaces. `"INFORMATION-TECHNOLOGY"` -> `"Information Technology"`. Kept in lockstep
+    deliberately -- see enhancements/05's note on not duplicating this logic
+    divergently between frontend and backend."""
+
+    words = [word for word in re.split(r"[-_]+", family) if word]
+    return " ".join(word[:1] + word[1:].lower() for word in words)
+
+
+def _compute_job_families(jobs: pd.DataFrame) -> list[JobFamilyCount]:
+    """Count `job_family` once at startup, sorted by count descending with `OTHER`
+    forced last regardless of its count -- it is the honestly-labelled leftover
+    bucket, not a family to compete for top billing. See enhancements/05."""
+
+    counts = jobs["job_family"].value_counts()
+    families = [
+        JobFamilyCount(family=str(family), label=_format_family_label(str(family)), count=int(count))
+        for family, count in counts.items()
+    ]
+    families.sort(key=lambda item: (item.family == "OTHER", -item.count))
+    return families
 
 
 _QUANTIZE_SELF_TEST_PAIR = [["quantization self-test query", "quantization self-test passage"]]
@@ -176,6 +202,7 @@ def get_model_bundle() -> ModelBundle:
 
     jobs = _load_jobs_frame(Path(settings.jobs_clean_path))
     idf = _load_idf(Path(settings.term_idf_path))
+    families = _compute_job_families(jobs)
 
     return ModelBundle(
         device=device,
@@ -184,7 +211,7 @@ def get_model_bundle() -> ModelBundle:
         index=index,
         jobs=jobs,
         idf=idf,
-        families=[],
+        families=families,
         loaded_at=time.monotonic(),
         warm=False,
     )

@@ -1,9 +1,7 @@
 """Pydantic request/response models for the TalentRank API.
 
-`job_family` still describes a feature a later enhancement doc implements (`05`) --
-it is always present with a stable placeholder value (`"OTHER"`) so the response
-shape doesn't change again once the frontend depends on it. `explanation` and
-`scores.skill_overlap` are real as of `04`. See enhancements/02.
+`explanation`/`scores.skill_overlap` are real as of `04`; `job_family` and filtering
+(`MatchFilters`, `filtered_candidates`) are real as of `05`. See enhancements/02.
 """
 
 from __future__ import annotations
@@ -18,7 +16,10 @@ _settings = get_settings()
 
 
 class MatchFilters(BaseModel):
-    """Optional result filters. Not yet applied by the pipeline -- see enhancements/05."""
+    """Optional result filters, applied server-side by `filters.apply_filters` --
+    see enhancements/05. `job_families` filters on `job_family` before rerank (with a
+    FAISS over-fetch so a narrow family still gets a real shortlist); `min_score`
+    filters on `cross_encoder_probability` after rerank."""
 
     job_families: list[str] | None = None
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -66,7 +67,7 @@ class JobMatch(BaseModel):
     description: str  # server-truncated to settings.description_max_chars
     skills: str
     job_category: str
-    job_family: str  # always "OTHER" until enhancements/05 and /09 add real families
+    job_family: str  # derived by data.derive_job_family; "OTHER" for the uncovered bucket, shown honestly
     bi_encoder_score: float
     cross_encoder_score: float
     scores: ScoreBreakdown
@@ -81,7 +82,7 @@ class MatchResponse(BaseModel):
     top_k: int
     top_n: int
     total_candidates: int  # retrieved, before filtering
-    filtered_candidates: int  # survived filters; equals total_candidates until enhancements/05
+    filtered_candidates: int  # survived family + min_score filters, before the top_n slice
     took_ms: float
     cached: bool
     corpus_size: int
@@ -102,9 +103,9 @@ class HealthResponse(BaseModel):
 
 
 class JobFamilyCount(BaseModel):
-    """One row of `GET /job-families`. Defined here now (03) because `ModelBundle`
-    needs the type for its `families` field; always `[]` until `05` computes it from
-    the loaded frame and `09` gives `job_family` real values."""
+    """One row of `GET /job-families`, computed once at startup by
+    `models._compute_job_families` from the loaded frame's `job_family` column --
+    see enhancements/05. Sorted by count descending with `OTHER` forced last."""
 
     family: str  # "INFORMATION-TECHNOLOGY"
     label: str  # "Information Technology" (reuse formatCategory's logic server-side)
