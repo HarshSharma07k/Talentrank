@@ -18,6 +18,24 @@ export function EmptyState() {
   );
 }
 
+export function WarmingState() {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 py-16 text-center dark:border-amber-900/50 dark:bg-amber-950/30">
+      <svg className="h-6 w-6 animate-spin text-amber-500" viewBox="0 0 24 24" fill="none">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4Z" />
+      </svg>
+      <div>
+        <p className="text-sm font-medium text-amber-700 dark:text-amber-300">The model is warming up</p>
+        <p className="mt-1 max-w-xs text-xs text-amber-600/80 dark:text-amber-400/80">
+          The API just started and is loading its models. The first match may be slow -- try again in
+          a few seconds.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function LoadingState() {
   return (
     <div className="flex flex-col items-center gap-3 rounded-xl border border-slate-200 py-16 text-center dark:border-slate-800">

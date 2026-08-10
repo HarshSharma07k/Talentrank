@@ -1,19 +1,37 @@
+import { NavLink } from "react-router";
 import type { HealthState } from "../hooks/useHealthCheck";
 import { useTheme } from "../hooks/useTheme";
 
 const STATUS_COPY: Record<HealthState, { label: string; dot: string }> = {
   checking: { label: "Checking API…", dot: "bg-amber-400" },
   online: { label: "API online", dot: "bg-emerald-500" },
+  warming: { label: "Warming up…", dot: "bg-amber-400" },
   offline: { label: "API offline", dot: "bg-red-500" },
 };
 
-export function Header({ health }: { health: HealthState }) {
+const NAV_LINKS = [
+  { to: "/", label: "Match", end: true },
+  { to: "/history", label: "History" },
+  { to: "/compare", label: "Compare" },
+  { to: "/how-it-works", label: "How it works" },
+];
+
+function navLinkClassName({ isActive }: { isActive: boolean }): string {
+  return [
+    "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+    isActive
+      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+      : "text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white",
+  ].join(" ");
+}
+
+export function Header({ state }: { state: HealthState }) {
   const [theme, toggleTheme] = useTheme();
-  const status = STATUS_COPY[health];
+  const status = STATUS_COPY[state];
 
   return (
     <header className="border-b border-slate-200 dark:border-slate-800">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600">
             <svg viewBox="0 0 32 32" fill="none" className="h-5 w-5">
@@ -31,6 +49,14 @@ export function Header({ health }: { health: HealthState }) {
             </p>
           </div>
         </div>
+
+        <nav className="flex items-center gap-1" aria-label="Primary">
+          {NAV_LINKS.map((link) => (
+            <NavLink key={link.to} to={link.to} end={link.end} className={navLinkClassName}>
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
 
         <div className="flex items-center gap-3">
           <span
