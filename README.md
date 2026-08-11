@@ -1,5 +1,6 @@
 # TalentRank
 
+[![CI](https://github.com/HarshSharma07k/Talentrank/actions/workflows/ci.yml/badge.svg)](https://github.com/HarshSharma07k/Talentrank/actions/workflows/ci.yml)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0D9488?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
