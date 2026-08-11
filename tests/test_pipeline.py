@@ -69,6 +69,33 @@ def test_counts_reported(fake_bundle: ModelBundle) -> None:
     assert filtered.filtered_candidates <= filtered.total_candidates
 
 
+def test_retrieval_rank_preserved_through_pipeline(fake_bundle: ModelBundle) -> None:
+    """End-to-end counterpart to test_rerank.py's unit test: through the full
+    match_response call, each JobMatch.retrieval_rank must still reflect its
+    original FAISS position, not get reset to match its new post-rerank
+    JobMatch.rank -- this is the invariant JobCard.tsx's rank-delta badge is
+    built on. See enhancements/17."""
+
+    class _ReversingCrossEncoder:
+        """Scores in exactly the reverse of retrieval order, so the pipeline's
+        rerank step is guaranteed to actually move every candidate."""
+
+        def predict(self, pairs: list[list[str]]) -> list[float]:
+            return list(range(len(pairs)))
+
+    fake_bundle.cross_encoder = _ReversingCrossEncoder()
+
+    response = pipeline.match_response("x" * 50, top_k=5, top_n=5, bundle=fake_bundle, explain=False)
+
+    assert len(response.results) == 5
+    ranks = [result.rank for result in response.results]
+    retrieval_ranks = [result.retrieval_rank for result in response.results]
+
+    assert ranks == [1, 2, 3, 4, 5]  # post-rerank position
+    assert retrieval_ranks == [5, 4, 3, 2, 1]  # original FAISS position, exactly reversed
+    assert retrieval_ranks != ranks  # the delta a rank-delta badge would render
+
+
 def test_cached_match_key_is_whitespace_insensitive(fake_bundle: ModelBundle) -> None:
     """The cache key hashes whitespace-normalized text -- the same normalization
     `retrieve_only` applies before embedding -- so a request that differs from a
