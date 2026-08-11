@@ -5,7 +5,7 @@ import { useTheme } from "../hooks/useTheme";
 const STATUS_COPY: Record<HealthState, { label: string; dot: string }> = {
   checking: { label: "Checking API…", dot: "bg-amber-400" },
   online: { label: "API online", dot: "bg-emerald-500" },
-  warming: { label: "Warming up…", dot: "bg-amber-400" },
+  warming: { label: "Waking up…", dot: "bg-amber-400" },
   offline: { label: "API offline", dot: "bg-red-500" },
 };
 

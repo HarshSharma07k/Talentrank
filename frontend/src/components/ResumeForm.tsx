@@ -80,19 +80,30 @@ export function ResumeForm({
             : `${resumeText.length.toLocaleString()} characters`}
         </p>
 
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:disabled:opacity-40"
-        >
-          {loading && (
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4Z" />
-            </svg>
-          )}
-          {loading ? "Matching…" : "Find matching jobs"}
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="hidden text-xs text-slate-400 sm:inline dark:text-slate-500">
+            or{" "}
+            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 py-0.5 font-sans text-[10px] dark:border-slate-700 dark:bg-slate-800">
+              ⌘
+            </kbd>
+            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 py-0.5 font-sans text-[10px] dark:border-slate-700 dark:bg-slate-800">
+              Enter
+            </kbd>
+          </span>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 dark:disabled:opacity-40"
+          >
+            {loading && (
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4Z" />
+              </svg>
+            )}
+            {loading ? "Matching…" : "Find matching jobs"}
+          </button>
+        </div>
       </div>
 
       <SearchControls value={searchControls} onChange={onSearchControlsChange} resultSummary={resultSummary} />
