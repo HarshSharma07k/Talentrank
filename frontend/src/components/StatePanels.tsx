@@ -26,10 +26,10 @@ export function WarmingState() {
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4Z" />
       </svg>
       <div>
-        <p className="text-sm font-medium text-amber-700 dark:text-amber-300">The model is warming up</p>
+        <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Waking the demo</p>
         <p className="mt-1 max-w-xs text-xs text-amber-600/80 dark:text-amber-400/80">
-          The API just started and is loading its models. The first match may be slow -- try again in
-          a few seconds.
+          This runs on a free hosting tier that sleeps when idle. The first match takes longer while it
+          starts back up -- it'll retry automatically.
         </p>
       </div>
     </div>

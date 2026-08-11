@@ -4,11 +4,13 @@ import { PipelineStepper, type PipelineStage } from "../components/PipelineStepp
 import { ResumeForm } from "../components/ResumeForm";
 import { ResultsList } from "../components/ResultsList";
 import type { SearchControlsValue } from "../components/SearchControls";
+import { SkillGapStrip } from "../components/SkillGapStrip";
 import { EmptyState, ErrorState, LoadingState, WarmingState } from "../components/StatePanels";
 import { useHistory } from "../hooks/useHistory";
 import type { RootLayoutContext } from "../layouts/RootLayout";
 import { ApiError, matchResume, retrieveOnly, type JobMatch, type MatchFilters } from "../lib/api";
 import { makeLabel } from "../lib/history";
+import { resultsToJson, resultsToMarkdown } from "../lib/resultsExport";
 import { decodeShare, encodeShare, isShareOversize } from "../lib/share";
 
 const DEFAULT_CONTROLS: SearchControlsValue = {
@@ -56,6 +58,7 @@ export function MatchPage() {
   const [counts, setCounts] = useState<{ filtered: number; total: number } | null>(null);
   const [sharedBanner, setSharedBanner] = useState(false);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "oversize" | "error">("idle");
+  const [exportStatus, setExportStatus] = useState<"idle" | "copied" | "error">("idle");
 
   // A monotonically-increasing sequence number, not just two AbortControllers: a
   // late /retrieve response arriving after a newer submit's /match has already
@@ -208,12 +211,46 @@ export function MatchPage() {
     setTimeout(() => setShareStatus("idle"), 4000);
   }
 
+  async function copyMarkdown() {
+    try {
+      await navigator.clipboard.writeText(resultsToMarkdown(results));
+      setExportStatus("copied");
+    } catch {
+      setExportStatus("error");
+    }
+    setTimeout(() => setExportStatus("idle"), 4000);
+  }
+
+  function downloadJson() {
+    const blob = new Blob([resultsToJson(results)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "talentrank-matches.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   const corpusDescription =
     health !== null ? `a ${health.corpus_size.toLocaleString()}-posting corpus` : "the job corpus";
 
   const isLoading = stage === "retrieving";
   const showWarming = stage === "idle" && healthState === "warming";
   const showEmptyIdle = stage === "idle" && healthState !== "warming";
+
+  // aria-live region announcing pipeline progress and results to screen reader
+  // users, who otherwise get no signal that anything happened when a match
+  // completes. See enhancements/13's accessibility section.
+  const liveMessage =
+    stage === "error"
+      ? errorMessage || "Something went wrong."
+      : stage === "ranked"
+        ? `${results.length} ${results.length === 1 ? "match" : "matches"} found`
+        : stage === "shortlisted"
+          ? "Shortlist ready, reranking with the cross-encoder"
+          : stage === "retrieving"
+            ? "Searching for matches"
+            : "";
 
   return (
     <>
@@ -255,7 +292,13 @@ export function MatchPage() {
           </div>
         </section>
 
-        <section>
+        <section aria-busy={isLoading}>
+          {/* Announces pipeline progress/results to screen readers; always mounted so
+              text changes are what trigger the announcement, not mount/unmount. */}
+          <div aria-live="polite" className="sr-only">
+            {liveMessage}
+          </div>
+
           <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
               {stage === "ranked"
@@ -268,13 +311,27 @@ export function MatchPage() {
           </div>
 
           {stage === "ranked" && results.length > 0 && (
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => void copyShareLink()}
                 className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 Copy share link
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyMarkdown()}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Copy as Markdown
+              </button>
+              <button
+                type="button"
+                onClick={downloadJson}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Download JSON
               </button>
               {shareStatus === "copied" && (
                 <span className="text-xs text-emerald-600 dark:text-emerald-400">Link copied.</span>
@@ -289,6 +346,14 @@ export function MatchPage() {
                   Couldn't copy automatically -- select the URL bar after sharing manually.
                 </span>
               )}
+              {exportStatus === "copied" && (
+                <span className="text-xs text-emerald-600 dark:text-emerald-400">Markdown copied.</span>
+              )}
+              {exportStatus === "error" && (
+                <span className="text-xs text-red-600 dark:text-red-400">
+                  Couldn't copy automatically -- your browser may be blocking clipboard access.
+                </span>
+              )}
             </div>
           )}
 
@@ -296,6 +361,7 @@ export function MatchPage() {
           {showEmptyIdle && <EmptyState />}
           {isLoading && <LoadingState />}
           {stage === "error" && <ErrorState message={errorMessage} onRetry={() => void runMatch()} />}
+          {stage === "ranked" && results.length > 0 && <SkillGapStrip results={results} />}
           {(stage === "shortlisted" || stage === "ranked") &&
             (results.length > 0 ? <ResultsList results={results} /> : <EmptyState />)}
         </section>
