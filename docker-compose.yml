@@ -1,0 +1,69 @@
+# See .claude/enhancements/14-containerization.md.
+#
+# `docker compose up --build`            -- api + web, in-process cache.
+# `docker compose --profile redis up --build` -- adds a redis container; the api
+#   service always points at it (TALENTRANK_CACHE_BACKEND=redis below), and
+#   get_cache_backend() (src/talentrank/cache.py) already falls back to
+#   in-memory if that connection fails -- which is exactly what happens when the
+#   redis profile isn't active and the "redis" hostname doesn't resolve. So the
+#   profile flag alone is what actually toggles the backend; no second variable
+#   to keep in sync. /health's cache_backend field reports whichever backend
+#   this fallback actually resolved to, not just what's configured.
+#
+#   Caveat measured while verifying this: get_cache_backend() is an
+#   @lru_cache(maxsize=1) singleton resolved on first use per process, and
+#   compose leaves an already-running, unchanged `api` container alone when you
+#   add `--profile redis` to a second `up`. So switching from the first command
+#   above straight to the second, without an `api` restart in between, leaves
+#   the *already-running* api process pinned to whatever it resolved before
+#   redis existed -- /health will still say "memory" until that process
+#   restarts (`docker compose --profile redis up --build --force-recreate api`,
+#   or a `down` first). Starting straight from `--profile redis up --build` on
+#   a clean stack does not hit this, since the singleton then resolves for the
+#   first time with redis already reachable.
+#
+# Compose auto-loads a project-root .env for ${VAR} substitution below (copy
+# .env.example if you want to override anything); none of these variables are
+# required to exist for `docker compose up` to work with sane defaults.
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${TALENTRANK_API_PORT:-8000}:7860"
+    environment:
+      - TALENTRANK_CORPUS_PROFILE=demo
+      - TALENTRANK_CACHE_BACKEND=redis
+      - TALENTRANK_REDIS_URL=redis://redis:6379/0
+      - TALENTRANK_CORS_ALLOWED_ORIGINS=${TALENTRANK_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
+    volumes:
+      # Local dev convenience: data/ changes (a re-run of prep_data.py etc.)
+      # show up on container restart without an image rebuild. Read-only --
+      # nothing in the app writes under data/ on this path (see enhancements/07's
+      # finding-3 fix: the embedding cache write path is never hit at use_cache=False).
+      - ./data:/app/data:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:${TALENTRANK_API_PORT:-8000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    # Wired in but off by default -- see 00-overview.md's confirmed product
+    # decisions. Only started by `docker compose --profile redis up`.
+    profiles: ["redis"]

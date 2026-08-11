@@ -1,4 +1,12 @@
 data/raw/
+# data/processed/* (not data/processed/, which would also block the negation
+# below from re-including term_idf.json -- excluding a directory outright makes
+# everything under it unreachable even with a later `!` rule) keeps the 633 MiB
+# full corpus + 181.5 MiB embeddings cache out of every build context while
+# still letting the Dockerfile COPY the one small file the demo profile needs.
+data/processed/*
+!data/processed/term_idf.json
+
 .venv/
 **/__pycache__/
 *.pyc
@@ -6,7 +14,10 @@ data/raw/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-frontend/node_modules/
-frontend/dist/
 .claude/
+.github/
+
 tests/
+*.md
+
+frontend/

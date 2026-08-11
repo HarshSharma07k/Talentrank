@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 import torch
 
 from src.talentrank import pipeline as pipeline_module
+from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
 from src.talentrank.extract import (
     EmptyExtractionError,
@@ -158,7 +159,10 @@ def health(bundle: ModelBundle = Depends(get_model_bundle)) -> HealthResponse:
         index_size=bundle.index.index.ntotal,
         bi_encoder=settings.bi_encoder_model_name,
         cross_encoder=settings.cross_encoder_model_name,
-        cache_backend=settings.cache_backend,
+        # The actually-resolved backend, not settings.cache_backend -- a
+        # configured-but-unreachable Redis falls back to in-memory inside
+        # get_cache_backend(), and this field must reflect that, not the intent.
+        cache_backend=get_cache_backend().name,
         uptime_seconds=time.monotonic() - START_TIME,
     )
 
