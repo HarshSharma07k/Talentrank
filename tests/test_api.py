@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from src.talentrank import rerank as rerank_module
+from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import get_settings
 from src.talentrank.models import ModelBundle, get_model_bundle
 
@@ -42,6 +43,28 @@ def test_health_shape(client: TestClient) -> None:
     assert body["corpus_size"] == 20
     assert body["index_size"] == 20
     assert body["warm"] is True
+
+
+def test_health_reports_live_cache_backend_not_configured_one(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Redis backend that's configured but unreachable degrades to in-memory
+    inside get_cache_backend() (see enhancements/07) -- /health must report that
+    real fallback, not just echo settings.cache_backend, or it would claim
+    "redis" while every request is actually served from memory. See
+    enhancements/14."""
+
+    monkeypatch.setenv("TALENTRANK_CACHE_BACKEND", "redis")
+    monkeypatch.setenv("TALENTRANK_REDIS_URL", "redis://127.0.0.1:6399/0")  # nothing listens here
+    get_settings.cache_clear()
+    get_cache_backend.cache_clear()
+
+    assert get_settings().cache_backend == "redis"  # the configured intent
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["cache_backend"] == "memory"  # the actual live backend
 
 
 def test_match_response_validates(client: TestClient) -> None:

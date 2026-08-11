@@ -8,7 +8,17 @@ from typing import Any
 import pytest
 
 from src.talentrank import cache as cache_module
-from src.talentrank.cache import CacheStats, InMemoryTTLCache
+from src.talentrank.cache import CacheStats, InMemoryTTLCache, RedisCache
+
+
+def test_backend_name_attribute_identifies_which_is_live() -> None:
+    """api.py's /health handler reads `.name` off whatever get_cache_backend()
+    actually returns (enhancements/14) -- both backends must carry it. Checked
+    as a class attribute for RedisCache so this doesn't need a real Redis server
+    (instantiating it imports `redis` and opens a connection)."""
+
+    assert InMemoryTTLCache().name == "memory"
+    assert RedisCache.name == "redis"
 
 
 def test_ttl_expiry(monkeypatch: pytest.MonkeyPatch) -> None:

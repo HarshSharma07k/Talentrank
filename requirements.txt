@@ -29,3 +29,11 @@ python-docx==1.2.0
 # enhancements/06: FastAPI's UploadFile/File() require this at runtime for
 # multipart/form-data parsing -- it was already transitively installed but unpinned.
 python-multipart==0.0.32
+
+# enhancements/14: gunicorn is the container's process manager (one worker, the
+# uvicorn worker class); redis is the client library get_cache_backend() imports
+# lazily when TALENTRANK_CACHE_BACKEND=redis -- without it pinned here the image
+# never has the package, so the compose redis profile would silently no-op back
+# to in-memory instead of actually connecting.
+gunicorn==23.0.0
+redis==8.1.0

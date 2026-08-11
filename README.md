@@ -103,9 +103,32 @@ Only after step 3 will `data/processed/jobs_clean.parquet` and `data/processed/j
 
 ### 1. Run with Docker
 
+The API image is a multi-stage build ([`Dockerfile`](Dockerfile)) that bakes both
+model weights offline (`HF_HUB_OFFLINE=1` at runtime — nothing is fetched from
+Hugging Face on container start) and installs the CPU-only `torch` wheel
+regardless of host OS, serves via Gunicorn + a Uvicorn worker as a non-root
+user, and ships the 25k demo corpus (`data/demo/`) rather than the gitignored
+full corpus. [`docker-compose.yml`](docker-compose.yml) also builds and serves
+the frontend (see step 4) behind nginx:
+
 ```bash
-docker build -t talentrank .
-docker run -p 8000:8000 talentrank
+docker compose up --build
+# API:      http://localhost:8000/health
+# Frontend: http://localhost:8080
+```
+
+The in-process cache is the default. Redis is wired in but off by default; to
+exercise it instead:
+
+```bash
+docker compose --profile redis up --build
+```
+
+To build and run just the API image directly, without compose:
+
+```bash
+docker build -t talentrank-api --target runtime .
+docker run -p 8000:7860 talentrank-api
 ```
 
 ### 2. Run Locally with Python
@@ -164,11 +187,12 @@ Then open `http://localhost:5173`. See `frontend/README.md` for details.
 talentrank/
 ├── README.md
 ├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 ├── data/
 ├── scripts/
 ├── src/talentrank/
-├── frontend/
+├── frontend/          # frontend/Dockerfile, frontend/nginx.conf
 └── tests/
 ```
 

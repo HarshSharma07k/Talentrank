@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     # Models.
     bi_encoder_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    cross_encoder_model_name: str = "ms-marco-MiniLM-L-6-v2"
+    cross_encoder_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     embedding_batch_size: int = 64
 
     # FAISS HNSW.

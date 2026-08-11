@@ -38,6 +38,12 @@ class CacheStats:
 
 
 class CacheBackend(Protocol):
+    # The backend actually in use, not the configured setting -- see
+    # get_cache_backend()'s docstring on why those two can differ. `/health`'s
+    # `cache_backend` field reads this, not `settings.cache_backend`, so a
+    # configured-but-unreachable Redis is reported honestly (enhancements/14).
+    name: str
+
     def get(self, key: str) -> bytes | None: ...
     def set(self, key: str, value: bytes, ttl_seconds: int) -> None: ...
     def stats(self) -> CacheStats: ...
@@ -50,6 +56,8 @@ class InMemoryTTLCache:
     will not proactively expire entries -- acceptable here since the only writer,
     `pipeline.cached_match`, reads immediately before it writes.
     """
+
+    name = "memory"
 
     def __init__(self, max_entries: int = 256) -> None:
         self._max_entries = max_entries
@@ -94,6 +102,8 @@ class RedisCache:
     package never breaks startup in the default (in-memory) configuration.
     """
 
+    name = "redis"
+
     def __init__(self, url: str) -> None:
         import redis  # local import: optional dependency, see class docstring
 
@@ -125,7 +135,12 @@ def get_cache_backend() -> CacheBackend:
     """Return the process-wide cache backend singleton, per `settings.cache_backend`.
 
     A Redis connection failure at construction time degrades to in-memory rather
-    than failing startup -- logged once at warning level, not per request.
+    than failing startup -- logged once at warning level, not per request. This is
+    exactly why `/health.cache_backend` must read `get_cache_backend().name`
+    rather than `settings.cache_backend`: the latter is the configured intent,
+    but a Redis outage silently substitutes a different object here, and a health
+    check that reports the former would lie about which backend requests are
+    actually hitting.
     """
 
     settings = get_settings()
