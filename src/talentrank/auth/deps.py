@@ -1,6 +1,9 @@
-"""FastAPI dependencies for authentication. See enhancements/20."""
+"""FastAPI dependencies for authentication. See enhancements/20 and /21."""
 
 from __future__ import annotations
+
+from contextlib import asynccontextmanager
+import logging
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,22 +15,52 @@ from src.talentrank.db.models import User
 from src.talentrank.db.session import get_db
 from src.talentrank.middleware import _client_ip, _consume_rate_limit_token
 
+logger = logging.getLogger("talentrank.auth")
+
 _bearer = HTTPBearer(auto_error=False)  # auto_error=False: anonymous is valid, not a 403
 
 
 async def get_optional_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    db: AsyncSession = Depends(get_db),
 ) -> User | None:
     """Resolve the bearer token to a user, or None. **Never raises.** A missing,
     malformed, expired, or revoked token all yield None -- endpoints that are public
     for anonymous callers must not start 401-ing because someone sent a stale
     token.
+
+    Deliberately does **not** declare `Depends(get_db)`: FastAPI resolves every
+    declared dependency unconditionally, before this function's own body ever runs
+    -- so a `db` parameter here would put a database session on the critical path
+    of *every* caller, including a fully anonymous one with no `Authorization`
+    header at all. That is exactly the risk enhancements/21 flags explicitly for
+    its own first real use of this dependency (`/match`, a public endpoint that
+    must keep working with the database down): "either make the dependency
+    tolerant, or scope the DB dependency so an anonymous request never needs a
+    connection." This opens a session only when a bearer token is actually
+    present -- so an anonymous request structurally never enters `get_db`'s code
+    path at all, not merely "enters it harmlessly."
+
+    Drives `get_db` manually via `contextlib.asynccontextmanager` rather than
+    `Depends(get_db)`, but still looks it up through
+    `request.app.dependency_overrides` first -- so it still resolves to whatever a
+    test's `app.dependency_overrides[get_db] = ...` installed, exactly as if it had
+    been a normal `Depends()`. Calling `get_sessionmaker()` directly instead would
+    silently bypass that override and hit the real, unmigrated production database
+    in every test -- a real failure caught while building this document's own
+    tests (`OperationalError: no such table: sessions`).
     """
 
     if credentials is None:
         return None
-    return await service.resolve_session(db, credentials.credentials)
+
+    db_dependency = request.app.dependency_overrides.get(get_db, get_db)
+    try:
+        async with asynccontextmanager(db_dependency)() as db:
+            return await service.resolve_session(db, credentials.credentials)
+    except Exception:
+        logger.warning("Could not resolve session; treating the request as anonymous.", exc_info=True)
+        return None
 
 
 async def get_current_user(user: User | None = Depends(get_optional_user)) -> User:

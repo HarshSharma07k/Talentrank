@@ -17,10 +17,12 @@ from fastapi.responses import JSONResponse
 import torch
 
 from src.talentrank import pipeline as pipeline_module
+from src.talentrank.auth.deps import get_optional_user
 from src.talentrank.auth.router import router as auth_router
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
-from src.talentrank.db.session import get_engine
+from src.talentrank.db.models import User
+from src.talentrank.db.session import get_db, get_engine
 from src.talentrank.extract import (
     EmptyExtractionError,
     EncryptedPdfError,
@@ -30,6 +32,8 @@ from src.talentrank.extract import (
 from src.talentrank.middleware import RateLimitMiddleware, RequestLoggingMiddleware
 from src.talentrank.models import ModelBundle, get_model_bundle, warmup
 from src.talentrank.schemas import ExtractTextResponse, HealthResponse, JobFamilyCount, MatchRequest, MatchResponse
+from src.talentrank.userdata import history as history_module
+from src.talentrank.userdata.router import router as userdata_router
 
 # Bounds each chunked read from the upload stream -- see `extract_text` below, which
 # reads in chunks rather than `await file.read()`-ing an unbounded body into memory.
@@ -107,6 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="TalentRank API", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(userdata_router)
 
 # Registration order is significant: the *last*-added middleware becomes the
 # *outermost* layer. CORS must wrap the rate limiter and the logger -- added last --
@@ -246,16 +251,69 @@ def retrieve(request: MatchRequest, bundle: ModelBundle = Depends(get_model_bund
     )
 
 
-@app.post("/match", response_model=MatchResponse)
-def match_resume(request: MatchRequest, bundle: ModelBundle = Depends(get_model_bundle)) -> MatchResponse:
-    """Retrieve candidates and rerank them with the cross-encoder, fronted by the
-    process result cache -- see enhancements/07."""
+async def _persist_run_best_effort(
+    http_request: Request, user: User, match_request: MatchRequest, response: MatchResponse
+) -> str | None:
+    """Best-effort: never lets a persistence failure fail a match (enhancements/21).
 
-    return pipeline_module.cached_match(
-        request.resume_text,
-        top_k=request.top_k,
-        top_n=request.top_n,
-        filters=request.filters,
-        bundle=bundle,
-        explain=request.explain,
+    Resolves `get_db` through `http_request.app.dependency_overrides` -- falling
+    back to the real dependency when nothing overrides it -- rather than calling
+    `get_sessionmaker()` directly. Calling the getter directly would silently
+    bypass a test's `app.dependency_overrides[get_db] = ...` and hit the real,
+    unmigrated production database instead; see `auth.deps.get_optional_user`'s
+    identical pattern and its own docstring for the same reasoning.
+    """
+
+    db_dependency = http_request.app.dependency_overrides.get(get_db, get_db)
+    try:
+        async with asynccontextmanager(db_dependency)() as db:
+            run_id = await history_module.persist_run(db, user, match_request, response)
+            if run_id is not None:
+                await db.commit()
+            return run_id
+    except Exception:
+        logger.warning("Could not open a DB session to persist match history.", exc_info=True)
+        return None
+
+
+@app.post("/match", response_model=MatchResponse)
+async def match_resume(
+    request: MatchRequest,
+    http_request: Request,
+    bundle: ModelBundle = Depends(get_model_bundle),
+    user: User | None = Depends(get_optional_user),
+) -> MatchResponse:
+    """Retrieve candidates and rerank them with the cross-encoder, fronted by the
+    process result cache (enhancements/07).
+
+    `async` since enhancements/21: the handler now awaits `get_optional_user` and,
+    for an authenticated caller, the persistence call below -- so the CPU-bound
+    retrieve+rerank work is explicitly pushed to a worker thread via
+    `anyio.to_thread.run_sync`. A *sync* handler used to get that for free from
+    Starlette's own threadpool; dropping it here would run a multi-hundred-
+    millisecond CPU-bound rerank pass directly on the event loop, stalling every
+    concurrent request -- the single easiest way to undo enhancements/08's whole
+    latency effort. `anyio.to_thread` still respects the limiter `lifespan`
+    configures from `settings.max_request_threads`, so the existing concurrency
+    ceiling is unchanged.
+    """
+
+    response = await anyio.to_thread.run_sync(
+        lambda: pipeline_module.cached_match(
+            request.resume_text,
+            top_k=request.top_k,
+            top_n=request.top_n,
+            filters=request.filters,
+            bundle=bundle,
+            explain=request.explain,
+        )
     )
+
+    if user is not None:
+        # AFTER the cache lookup returns, never inside it -- enhancements/21's own
+        # finding: the match cache key has no principal component, so a run_id
+        # serialized into the cached payload would let user B's cache hit on the
+        # identical request return user A's run_id.
+        response.run_id = await _persist_run_best_effort(http_request, user, request, response)
+
+    return response

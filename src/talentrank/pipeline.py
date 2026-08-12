@@ -34,6 +34,23 @@ if not logger.handlers:
     logger.propagate = False
 
 
+def _normalize_resume_text(resume_text: str) -> str:
+    return " ".join(str(resume_text).split())
+
+
+def resume_digest(resume_text: str) -> str:
+    """SHA-256 of the whitespace-normalized resume text, truncated to 16 hex chars.
+
+    The canonical `resume_hash`: used as the cache-key component in `cached_match`,
+    `MatchResponse.resume_hash`, and (enhancements/21) `MatchRun.resume_hash` /
+    the history-import dedup key. Never recompute this a second way -- a second
+    implementation of the same idea is how dedup logic and cache logic silently
+    drift apart from each other.
+    """
+
+    return hashlib.sha256(_normalize_resume_text(resume_text).encode("utf-8")).hexdigest()[:16]
+
+
 def _resolve_job_row(jobs: pd.DataFrame, job_id: int) -> dict[str, Any] | None:
     str_id = str(job_id)
 
@@ -52,7 +69,7 @@ def retrieve_only(resume_text: str, top_k: int, bundle: ModelBundle | None = Non
     if top_k <= 0:
         return []
 
-    query_text = " ".join(str(resume_text).split())
+    query_text = _normalize_resume_text(resume_text)
     if not query_text:
         return []
 
@@ -147,6 +164,7 @@ def _build_match_response(
     took_ms: float,
     cached: bool,
     bundle: ModelBundle,
+    resume_hash: str,
 ) -> MatchResponse:
     return MatchResponse(
         results=results,
@@ -158,6 +176,10 @@ def _build_match_response(
         took_ms=took_ms,
         cached=cached,
         corpus_size=len(bundle.jobs),
+        resume_hash=resume_hash,
+        # run_id is never set here -- enhancements/21's whole point. It is attached
+        # by the caller, after any cache lookup returns, never inside a value that
+        # might be served from the shared cache to a different user.
     )
 
 
@@ -197,6 +219,7 @@ def retrieve_response(resume_text: str, top_k: int, top_n: int, bundle: ModelBun
         took_ms=(time.perf_counter() - start) * 1000,
         cached=False,
         bundle=bundle,
+        resume_hash=resume_digest(resume_text),
     )
 
 
@@ -261,6 +284,7 @@ def match_response(
         took_ms=(time.perf_counter() - start) * 1000,
         cached=False,
         bundle=bundle,
+        resume_hash=resume_digest(resume_text),
     )
 
 
@@ -300,9 +324,7 @@ def cached_match(
 
     settings = get_settings()
     cache = get_cache_backend()
-    normalized_text = " ".join(str(resume_text).split())
-    resume_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()[:16]
-    key = f"match:v1:{resume_hash}:{top_k}:{top_n}:{_filters_digest(filters)}:{int(explain)}"
+    key = f"match:v1:{resume_digest(resume_text)}:{top_k}:{top_n}:{_filters_digest(filters)}:{int(explain)}"
 
     start = time.perf_counter()
     cached_bytes: bytes | None = None
@@ -315,6 +337,8 @@ def cached_match(
         # `took_ms` on a stored response describes the original (uncached) compute --
         # replaying it on a hit would misreport a near-instant cache lookup as an
         # 800ms rerank pass. Overwrite it with this call's actual elapsed time.
+        # `run_id` is never in the cached payload (enhancements/21) -- it stays
+        # None here exactly like a fresh response; the caller attaches it.
         response = MatchResponse.model_validate_json(cached_bytes)
         response.cached = True
         response.took_ms = (time.perf_counter() - start) * 1000

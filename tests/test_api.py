@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 
 from src.talentrank import rerank as rerank_module
@@ -19,6 +20,12 @@ from src.talentrank.config import get_settings
 from src.talentrank.models import ModelBundle, get_model_bundle
 
 MIN_RESUME_CHARS = 40
+
+
+async def _register(client: httpx.AsyncClient, email: str, password: str = "correct-horse-battery") -> str:
+    response = await client.post("/auth/register", json={"email": email, "password": password})
+    assert response.status_code == 201
+    return response.json()["token"]
 
 
 def test_health_shape(client: TestClient) -> None:
@@ -210,3 +217,162 @@ def test_semaphore_timeout_503(client: TestClient, monkeypatch: pytest.MonkeyPat
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "5"
+
+
+@pytest.mark.anyio
+async def test_run_id_not_shared_across_users_on_cache_hit(async_client: httpx.AsyncClient) -> None:
+    """The one test standing between this design and a cross-account data leak.
+    See enhancements/21's own "finding this document exists because of": the match
+    cache has no principal component, so `run_id` must be attached *after* the
+    cache lookup returns, never serialized into the cached payload -- otherwise
+    user B's cache hit on the identical request would return user A's `run_id`.
+    """
+
+    token_a = await _register(async_client, "cacheuser-a@example.com")
+    token_b = await _register(async_client, "cacheuser-b@example.com")
+
+    payload = {"resume_text": "x" * 60}
+    response_a = await async_client.post("/match", json=payload, headers={"Authorization": f"Bearer {token_a}"})
+    response_b = await async_client.post("/match", json=payload, headers={"Authorization": f"Bearer {token_b}"})
+
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+    body_a = response_a.json()
+    body_b = response_b.json()
+
+    assert body_a["cached"] is False  # first-ever request for this exact resume text
+    assert body_b["cached"] is True  # identical request -- the shared cache serves it
+
+    assert body_a["run_id"] is not None
+    assert body_b["run_id"] is not None
+    assert body_a["run_id"] != body_b["run_id"]
+
+    # Each run_id must point at a row the respective user actually owns.
+    own_a = await async_client.get(f"/me/history/{body_a['run_id']}", headers={"Authorization": f"Bearer {token_a}"})
+    own_b = await async_client.get(f"/me/history/{body_b['run_id']}", headers={"Authorization": f"Bearer {token_b}"})
+    assert own_a.status_code == 200
+    assert own_b.status_code == 200
+
+    # User A must not be able to read user B's run under the run_id the cache hit gave B.
+    cross = await async_client.get(f"/me/history/{body_b['run_id']}", headers={"Authorization": f"Bearer {token_a}"})
+    assert cross.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_match_anonymous_has_null_run_id(async_client: httpx.AsyncClient) -> None:
+    response = await async_client.post("/match", json={"resume_text": "x" * MIN_RESUME_CHARS})
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] is None
+
+
+@pytest.mark.anyio
+async def test_match_persists_history_for_authenticated_user(async_client: httpx.AsyncClient) -> None:
+    token = await _register(async_client, "history-user@example.com")
+
+    response = await async_client.post(
+        "/match", json={"resume_text": "x" * 55}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+    assert run_id is not None
+
+    detail = await async_client.get(f"/me/history/{run_id}", headers={"Authorization": f"Bearer {token}"})
+    assert detail.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_match_succeeds_when_persistence_fails(
+    async_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Proves the best-effort guard: a persistence failure must never fail a match."""
+
+    from src.talentrank.userdata import history as history_module
+
+    async def _raise(*args: object, **kwargs: object) -> str | None:
+        raise RuntimeError("simulated persistence outage")
+
+    monkeypatch.setattr(history_module, "persist_run", _raise)
+
+    token = await _register(async_client, "persist-fail@example.com")
+    response = await async_client.post(
+        "/match", json={"resume_text": "x" * 55}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] is None
+
+
+@pytest.mark.anyio
+async def test_match_response_resume_hash_matches_pipeline_digest(async_client: httpx.AsyncClient) -> None:
+    from src.talentrank import pipeline
+
+    resume_text = "x" * 55
+    response = await async_client.post("/match", json={"resume_text": resume_text})
+
+    assert response.status_code == 200
+    assert response.json()["resume_hash"] == pipeline.resume_digest(resume_text)
+
+
+def test_anonymous_match_works_with_database_down(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The regression guard for enhancements/21's own explicit risk note: an
+    anonymous /match call must never touch the database at all, so even a
+    completely broken DB dependency cannot break the public matching path.
+
+    Deliberately uses the plain sync `client` fixture, not `async_client` --
+    `async_client` overrides `get_db`, which would mask exactly the regression
+    this test exists to catch (a `Depends(get_db)` re-introduced somewhere in
+    `/match`'s dependency chain). `client` never overrides it, so a real,
+    unconditional DB dependency would actually hit the monkeypatched, raising
+    `get_sessionmaker`/`get_engine` below.
+    """
+
+    from src.talentrank.db import session as db_session_module
+
+    def _boom() -> object:
+        raise RuntimeError("the database is unreachable")
+
+    monkeypatch.setattr(db_session_module, "get_sessionmaker", _boom)
+    monkeypatch.setattr(db_session_module, "get_engine", _boom)
+
+    response = client.post("/match", json={"resume_text": "x" * MIN_RESUME_CHARS})
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] is None
+
+
+@pytest.mark.anyio
+async def test_match_handler_does_not_block_event_loop(
+    async_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards the async-conversion trap: the CPU-bound retrieve+rerank work must run
+    via `anyio.to_thread.run_sync`, never directly on the event loop -- dropping
+    that would stall every concurrent request behind a multi-hundred-millisecond
+    synchronous call, undoing enhancements/08's whole latency effort. A single
+    request's assertion is enough to prove the threadpool hop happened; it
+    wouldn't show up at all in a test that only checked the response was correct.
+    """
+
+    import anyio.to_thread
+
+    from src.talentrank import api as api_module
+
+    calls: list[object] = []
+    original_run_sync = anyio.to_thread.run_sync
+
+    async def spy_run_sync(func: object, *args: object, **kwargs: object) -> object:
+        calls.append(func)
+        return await original_run_sync(func, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(api_module.anyio.to_thread, "run_sync", spy_run_sync)
+
+    response = await async_client.post("/match", json={"resume_text": "x" * MIN_RESUME_CHARS})
+
+    assert response.status_code == 200
+    # `anyio.to_thread.run_sync` is patched globally, so `httpx.AsyncClient`'s own
+    # internals (unrelated to this request) also show up in `calls` -- filter to
+    # the pipeline call specifically, identifiable by the enclosing function's name
+    # on the lambda `match_resume` wraps it in.
+    match_calls = [c for c in calls if getattr(c, "__qualname__", "").startswith("match_resume")]
+    assert len(match_calls) == 1

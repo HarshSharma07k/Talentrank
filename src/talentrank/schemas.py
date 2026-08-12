@@ -86,6 +86,12 @@ class MatchResponse(BaseModel):
     took_ms: float
     cached: bool
     corpus_size: int
+    resume_hash: str  # pipeline.resume_digest(resume_text) -- a pure function of the request, safe to cache
+    # match_runs.id for the row persisted for *this* caller, enhancements/21. None
+    # for anonymous requests and when persistence was skipped or failed. Must be
+    # attached AFTER the cache lookup, never computed inside match_response/
+    # cached_match -- see pipeline.py's own note on why.
+    run_id: str | None = None
 
 
 class HealthResponse(BaseModel):
