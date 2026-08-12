@@ -17,6 +17,7 @@ from src.talentrank.userdata import lists as lists_module
 from src.talentrank.userdata.schemas import (
     FeedbackRequest,
     FeedbackResponse,
+    FeedbackStateOut,
     HistoryPatchRequest,
     ImportRequest,
     ImportResult,
@@ -274,6 +275,18 @@ async def remove_saved_list_item(
 
 
 # --- Feedback --------------------------------------------------------------------
+
+
+@router.get("/feedback", response_model=list[FeedbackStateOut])
+async def get_feedback_state(
+    run_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[FeedbackStateOut]:
+    """Lets `FeedbackButtons` restore its toggled state after a reload -- see
+    enhancements/23. Scoped to one run at a time (a query param, not a path
+    segment, since it's a filter on the caller's own feedback rather than a
+    resource in its own right)."""
+
+    return await feedback_module.list_feedback_for_run(db, user, run_id)
 
 
 @router.post("/feedback", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)

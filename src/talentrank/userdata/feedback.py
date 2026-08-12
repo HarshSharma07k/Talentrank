@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.talentrank.db.models import MatchFeedback, User
+from src.talentrank.userdata.schemas import FeedbackStateOut
 
 _OPPOSITE_SIGNAL: dict[str, str] = {"up": "down", "down": "up"}
 
@@ -72,3 +73,20 @@ async def submit_feedback(
     db.add(row)
     await db.flush()
     return row, "created"
+
+
+async def list_feedback_for_run(db: AsyncSession, user: User, run_id: uuid.UUID) -> list[FeedbackStateOut]:
+    """The caller's own `up`/`down` state for every job in one run -- enhancements/23
+    needs this so `FeedbackButtons` can render as already-toggled after a reload,
+    not just optimistically in the tab that set it. `click` is excluded: it has no
+    "still highlighted" UI state to restore.
+    """
+
+    result = await db.execute(
+        select(MatchFeedback.job_id, MatchFeedback.signal).where(
+            MatchFeedback.user_id == user.id,
+            MatchFeedback.match_run_id == run_id,
+            MatchFeedback.signal.in_(("up", "down")),
+        )
+    )
+    return [FeedbackStateOut(job_id=job_id, signal=signal) for job_id, signal in result.all()]

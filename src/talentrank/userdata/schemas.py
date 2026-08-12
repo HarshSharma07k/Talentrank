@@ -134,3 +134,13 @@ class FeedbackRequest(BaseModel):
 class FeedbackResponse(BaseModel):
     id: str | None
     action: Literal["created", "removed"]
+
+
+class FeedbackStateOut(BaseModel):
+    """One row of `GET /me/feedback`: the caller's own `up`/`down` signals for a
+    given run, so a reloaded page can show a signal as still toggled on without
+    the client having to remember it. `click` is never returned here -- it isn't a
+    toggle state anything renders, only a one-way relevance signal."""
+
+    job_id: int
+    signal: Literal["up", "down"]
