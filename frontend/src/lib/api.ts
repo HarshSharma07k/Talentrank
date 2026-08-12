@@ -1,3 +1,5 @@
+import { AUTH_EXPIRED_EVENT, type AuthUser, clearAuth, isExpired, loadAuth } from "./auth";
+
 export interface MatchFilters {
   job_families?: string[] | null;
   min_score?: number | null;
@@ -117,19 +119,52 @@ async function parseErrorMessage(response: Response): Promise<string> {
   return response.statusText || `Request failed with status ${response.status}`;
 }
 
-export async function checkHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  const response = await fetch(`${API_BASE_URL}/health`, { signal });
+// A 401 from these two is about the credentials in *this* request, not about an
+// existing stored session's token -- a signed-in user who mistypes a password
+// while trying to sign into a *different* account must not get silently logged
+// out of their current, still-valid session as a side effect. Not in
+// enhancements/22's own `apiFetch` sketch, which would clear-and-dispatch on
+// every 401 unconditionally; added here because that's a real, reachable bug
+// (LoginPage/RegisterPage are not behind RequireAuth, so a signed-in user can
+// land on them with a live session still attached to every apiFetch call).
+const AUTH_ENTRY_ENDPOINTS = new Set(["/auth/login", "/auth/register"]);
+
+/**
+ * The one chokepoint every request goes through -- see enhancements/22. Attaches
+ * `Authorization` when a non-expired token is stored, and treats a 401 from an
+ * already-authenticated call as "the server no longer honours this token":
+ * clears it and notifies the app exactly once, never retries (a 401 handler that
+ * itself calls the API can loop).
+ *
+ * Deliberately does not set `Content-Type` here -- `extractText` posts
+ * `FormData`, and the browser must be left to set the multipart boundary itself.
+ * Callers that need JSON set `Content-Type` themselves, same as before this
+ * wrapper existed.
+ */
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const stored = loadAuth();
+  const headers = new Headers(init.headers);
+  if (stored && !isExpired(stored)) headers.set("Authorization", `Bearer ${stored.token}`);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+
+  if (response.status === 401 && stored && !AUTH_ENTRY_ENDPOINTS.has(path)) {
+    clearAuth();
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  }
   if (!response.ok) {
     throw new ApiError(await parseErrorMessage(response), response.status);
   }
+  return response;
+}
+
+export async function checkHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  const response = await apiFetch("/health", { signal });
   return (await response.json()) as HealthResponse;
 }
 
 export async function getJobFamilies(signal?: AbortSignal): Promise<JobFamilyCount[]> {
-  const response = await fetch(`${API_BASE_URL}/job-families`, { signal });
-  if (!response.ok) {
-    throw new ApiError(await parseErrorMessage(response), response.status);
-  }
+  const response = await apiFetch("/job-families", { signal });
   return (await response.json()) as JobFamilyCount[];
 }
 
@@ -137,15 +172,7 @@ export async function extractText(file: File, signal?: AbortSignal): Promise<Ext
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/extract-text`, {
-    method: "POST",
-    body: formData,
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new ApiError(await parseErrorMessage(response), response.status);
-  }
+  const response = await apiFetch("/extract-text", { method: "POST", body: formData, signal });
 
   return (await response.json()) as ExtractTextResponse;
 }
@@ -169,16 +196,12 @@ async function postMatchRequest(
   if (options.filters !== undefined) body.filters = options.filters;
   if (options.explain !== undefined) body.explain = options.explain;
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await apiFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
   });
-
-  if (!response.ok) {
-    throw new ApiError(await parseErrorMessage(response), response.status);
-  }
 
   return (await response.json()) as MatchResponse;
 }
@@ -197,4 +220,60 @@ export async function retrieveOnly(
   signal?: AbortSignal,
 ): Promise<MatchResponse> {
   return postMatchRequest("/retrieve", resumeText, options, signal);
+}
+
+// --- Auth (enhancements/22) ----------------------------------------------------
+
+export interface SessionResponse {
+  token: string;
+  expires_at: string;
+  user: AuthUser;
+}
+
+export async function register(email: string, password: string, displayName?: string): Promise<SessionResponse> {
+  const response = await apiFetch("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, display_name: displayName }),
+  });
+  return (await response.json()) as SessionResponse;
+}
+
+export async function login(email: string, password: string): Promise<SessionResponse> {
+  const response = await apiFetch("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  return (await response.json()) as SessionResponse;
+}
+
+export async function logout(): Promise<void> {
+  await apiFetch("/auth/logout", { method: "POST" });
+}
+
+export async function logoutAll(): Promise<void> {
+  await apiFetch("/auth/logout-all", { method: "POST" });
+}
+
+export async function getMe(): Promise<AuthUser> {
+  const response = await apiFetch("/auth/me");
+  return (await response.json()) as AuthUser;
+}
+
+export async function updateMe(displayName: string | null): Promise<AuthUser> {
+  const response = await apiFetch("/auth/me", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: displayName }),
+  });
+  return (await response.json()) as AuthUser;
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiFetch("/auth/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
 }

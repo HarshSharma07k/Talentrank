@@ -1,4 +1,6 @@
 import { NavLink } from "react-router";
+import { AuthMenu } from "./AuthMenu";
+import type { AuthSession } from "../hooks/useAuthSession";
 import type { HealthState } from "../hooks/useHealthCheck";
 import { useTheme } from "../hooks/useTheme";
 
@@ -25,7 +27,7 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
   ].join(" ");
 }
 
-export function Header({ state }: { state: HealthState }) {
+export function Header({ state, auth }: { state: HealthState; auth: AuthSession }) {
   const [theme, toggleTheme] = useTheme();
   const status = STATUS_COPY[state];
 
@@ -66,6 +68,8 @@ export function Header({ state }: { state: HealthState }) {
             <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
             {status.label}
           </span>
+
+          <AuthMenu auth={auth} />
 
           <button
             type="button"
