@@ -56,6 +56,11 @@ export function MatchPage() {
   const [rawResults, setRawResults] = useState<JobMatch[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [counts, setCounts] = useState<{ filtered: number; total: number } | null>(null);
+  // Identifies the current result set for FeedbackButtons/SaveToListButton --
+  // resume_hash is always present, run_id is null for anonymous callers and for
+  // authenticated ones when server-side persistence failed (still best-effort;
+  // see enhancements/21).
+  const [runContext, setRunContext] = useState<{ resumeHash: string; runId: string | null } | null>(null);
   const [sharedBanner, setSharedBanner] = useState(false);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "oversize" | "error">("idle");
   const [exportStatus, setExportStatus] = useState<"idle" | "copied" | "error">("idle");
@@ -132,8 +137,9 @@ export function MatchPage() {
       setStage("ranked");
 
       if (matchResponse.results.length > 0) {
-        saveHistoryEntry({
-          id: crypto.randomUUID(),
+        // Awaited: a forgotten await here would let the history list render
+        // before the save actually lands (enhancements/23's own risk note).
+        await saveHistoryEntry({
           createdAt: Date.now(),
           label: makeLabel(effectiveResumeText),
           resumeText: effectiveResumeText,
@@ -143,6 +149,7 @@ export function MatchPage() {
           results: matchResponse.results,
         });
       }
+      setRunContext({ resumeHash: matchResponse.resume_hash, runId: matchResponse.run_id });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (seq !== requestSeqRef.current) return;
@@ -363,7 +370,15 @@ export function MatchPage() {
           {stage === "error" && <ErrorState message={errorMessage} onRetry={() => void runMatch()} />}
           {stage === "ranked" && results.length > 0 && <SkillGapStrip results={results} />}
           {(stage === "shortlisted" || stage === "ranked") &&
-            (results.length > 0 ? <ResultsList results={results} /> : <EmptyState />)}
+            (results.length > 0 ? (
+              <ResultsList
+                results={results}
+                resumeHash={stage === "ranked" ? (runContext?.resumeHash ?? null) : null}
+                runId={stage === "ranked" ? (runContext?.runId ?? null) : null}
+              />
+            ) : (
+              <EmptyState />
+            ))}
         </section>
       </div>
     </>

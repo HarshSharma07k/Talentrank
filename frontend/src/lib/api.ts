@@ -277,3 +277,190 @@ export async function changePassword(currentPassword: string, newPassword: strin
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
 }
+
+// --- /me: history, saved lists, feedback (enhancements/23) ---------------------
+
+export interface MatchRunSummary {
+  id: string;
+  label: string;
+  created_at: string;
+  top_k: number;
+  top_n: number;
+  filters: MatchFilters;
+  corpus_profile: string;
+  result_count: number;
+  top_job_titles: string[];
+}
+
+export interface MatchRunDetail {
+  id: string;
+  label: string;
+  resume_hash: string;
+  resume_text: string;
+  top_k: number;
+  top_n: number;
+  filters: MatchFilters;
+  corpus_profile: string;
+  took_ms: number;
+  created_at: string;
+  results: JobMatch[];
+}
+
+export interface ImportEntryPayload {
+  created_at: number; // epoch ms, matching HistoryEntry.createdAt
+  label: string;
+  resume_text: string;
+  top_k: number;
+  top_n: number;
+  filters: MatchFilters;
+  results: JobMatch[];
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped_duplicate: number;
+  skipped_quota: number;
+}
+
+export async function getHistoryList(page = 1, signal?: AbortSignal): Promise<MatchRunSummary[]> {
+  const response = await apiFetch(`/me/history?page=${page}`, { signal });
+  return (await response.json()) as MatchRunSummary[];
+}
+
+export async function getHistoryDetail(runId: string, signal?: AbortSignal): Promise<MatchRunDetail> {
+  const response = await apiFetch(`/me/history/${runId}`, { signal });
+  return (await response.json()) as MatchRunDetail;
+}
+
+export async function renameHistoryEntry(runId: string, label: string): Promise<MatchRunDetail> {
+  const response = await apiFetch(`/me/history/${runId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  return (await response.json()) as MatchRunDetail;
+}
+
+export async function deleteHistoryEntry(runId: string): Promise<void> {
+  await apiFetch(`/me/history/${runId}`, { method: "DELETE" });
+}
+
+export async function clearServerHistory(): Promise<void> {
+  await apiFetch("/me/history", { method: "DELETE" });
+}
+
+export async function importHistory(entries: ImportEntryPayload[]): Promise<ImportResult> {
+  const response = await apiFetch("/me/history/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entries }),
+  });
+  return (await response.json()) as ImportResult;
+}
+
+export interface SavedListSummary {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+}
+
+export interface SavedListItemOut {
+  job_id: number;
+  job_title: string;
+  job_family: string;
+  note: string | null;
+  created_at: string;
+}
+
+export interface SavedListDetail {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  items: SavedListItemOut[];
+}
+
+export async function getSavedLists(): Promise<SavedListSummary[]> {
+  const response = await apiFetch("/me/lists");
+  return (await response.json()) as SavedListSummary[];
+}
+
+export async function createSavedList(name: string): Promise<SavedListDetail> {
+  const response = await apiFetch("/me/lists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return (await response.json()) as SavedListDetail;
+}
+
+export async function getSavedListDetail(listId: string): Promise<SavedListDetail> {
+  const response = await apiFetch(`/me/lists/${listId}`);
+  return (await response.json()) as SavedListDetail;
+}
+
+export async function renameSavedList(listId: string, name: string): Promise<SavedListDetail> {
+  const response = await apiFetch(`/me/lists/${listId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return (await response.json()) as SavedListDetail;
+}
+
+export async function deleteSavedList(listId: string): Promise<void> {
+  await apiFetch(`/me/lists/${listId}`, { method: "DELETE" });
+}
+
+export async function addSavedListItem(
+  listId: string,
+  jobId: number,
+  jobTitle: string,
+  jobFamily: string,
+  note?: string | null,
+): Promise<SavedListItemOut> {
+  const response = await apiFetch(`/me/lists/${listId}/items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId, job_title: jobTitle, job_family: jobFamily, note: note ?? null }),
+  });
+  return (await response.json()) as SavedListItemOut;
+}
+
+export async function removeSavedListItem(listId: string, jobId: number): Promise<void> {
+  await apiFetch(`/me/lists/${listId}/items/${jobId}`, { method: "DELETE" });
+}
+
+export type FeedbackSignal = "up" | "down" | "click";
+
+export interface FeedbackState {
+  job_id: number;
+  signal: "up" | "down";
+}
+
+export interface FeedbackResult {
+  id: string | null;
+  action: "created" | "removed";
+}
+
+export async function getFeedbackState(runId: string, signal?: AbortSignal): Promise<FeedbackState[]> {
+  const response = await apiFetch(`/me/feedback?run_id=${runId}`, { signal });
+  return (await response.json()) as FeedbackState[];
+}
+
+export async function postFeedback(
+  jobId: number,
+  signal: FeedbackSignal,
+  rank: number,
+  resumeHash: string,
+  runId: string | null,
+): Promise<FeedbackResult> {
+  const response = await apiFetch("/me/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: jobId, signal, rank, resume_hash: resumeHash, run_id: runId }),
+  });
+  return (await response.json()) as FeedbackResult;
+}

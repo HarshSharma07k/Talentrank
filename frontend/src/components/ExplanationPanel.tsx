@@ -7,20 +7,33 @@ interface ExplanationPanelProps {
   explanation: Explanation;
   scores: ScoreBreakdownData;
   onHoverMatchedSkill: (skill: string | null) => void;
+  // Enhancements/23: JobCard listens for this to fire the one-time `click`
+  // relevance signal when a signed-in user actually opens the evidence panel.
+  // Optional and inert when omitted -- this component's own behaviour is
+  // unchanged either way.
+  onToggle?: (open: boolean) => void;
 }
 
 // Collapsed by default, disclosed by "Why this match?" -- the ranking stays purely
 // the cross-encoder's; this panel is the separate, honest evidence layer next to it.
 // See enhancements/04's Do-NOT on blending a composite score.
-export function ExplanationPanel({ explanation, scores, onHoverMatchedSkill }: ExplanationPanelProps) {
+export function ExplanationPanel({ explanation, scores, onHoverMatchedSkill, onToggle }: ExplanationPanelProps) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
+
+  function toggleOpen() {
+    setOpen((value) => {
+      const next = !value;
+      onToggle?.(next);
+      return next;
+    });
+  }
 
   return (
     <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800/60">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleOpen}
         aria-expanded={open}
         aria-controls={panelId}
         className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"

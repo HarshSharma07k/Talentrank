@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.talentrank.db.models import User
+from src.talentrank.db.models import MatchRun, User
 from src.talentrank.userdata import feedback
 from src.talentrank.userdata.schemas import FeedbackRequest
 
@@ -21,6 +21,25 @@ async def _make_user(db: AsyncSession, email: str) -> User:
     db.add(user)
     await db.flush()
     return user
+
+
+async def _make_run(db: AsyncSession, user: User) -> MatchRun:
+    run = MatchRun(
+        user_id=user.id,
+        label="run",
+        resume_hash="a" * 16,
+        resume_text="resume text",
+        top_k=30,
+        top_n=10,
+        filters={},
+        filters_digest="a" * 8,
+        results=[],
+        corpus_profile="demo",
+        took_ms=1.0,
+    )
+    db.add(run)
+    await db.flush()
+    return run
 
 
 async def test_feedback_upsert_toggles_off(db_session: AsyncSession) -> None:
@@ -95,3 +114,35 @@ async def test_feedback_accepts_null_run_id(db_session: AsyncSession) -> None:
     assert action == "created"
     assert row is not None
     assert row.match_run_id is None
+
+
+async def test_list_feedback_for_run_excludes_click_and_other_users(db_session: AsyncSession) -> None:
+    user = await _make_user(db_session, "list-feedback@example.com")
+    other = await _make_user(db_session, "list-feedback-other@example.com")
+    run = await _make_run(db_session, user)
+
+    await feedback.submit_feedback(db_session, user, job_id=1, signal="up", rank=1, resume_hash="a" * 16, run_id=run.id)
+    await feedback.submit_feedback(
+        db_session, user, job_id=2, signal="down", rank=2, resume_hash="a" * 16, run_id=run.id
+    )
+    await feedback.submit_feedback(
+        db_session, user, job_id=3, signal="click", rank=3, resume_hash="a" * 16, run_id=run.id
+    )
+    # Same job/run for a different user -- must not leak into `user`'s list.
+    await feedback.submit_feedback(
+        db_session, other, job_id=1, signal="up", rank=1, resume_hash="a" * 16, run_id=run.id
+    )
+
+    states = await feedback.list_feedback_for_run(db_session, user, run.id)
+
+    assert {(s.job_id, s.signal) for s in states} == {(1, "up"), (2, "down")}
+
+
+async def test_list_feedback_for_run_reflects_toggle_off(db_session: AsyncSession) -> None:
+    user = await _make_user(db_session, "toggle-list@example.com")
+    run = await _make_run(db_session, user)
+
+    await feedback.submit_feedback(db_session, user, job_id=1, signal="up", rank=1, resume_hash="a" * 16, run_id=run.id)
+    await feedback.submit_feedback(db_session, user, job_id=1, signal="up", rank=1, resume_hash="a" * 16, run_id=run.id)
+
+    assert await feedback.list_feedback_for_run(db_session, user, run.id) == []

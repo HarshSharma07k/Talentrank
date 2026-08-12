@@ -18,6 +18,7 @@ function HistoryRow({
   onRename,
   onRemove,
   onView,
+  viewing,
 }: {
   entry: HistoryEntry;
   selected: boolean;
@@ -25,6 +26,7 @@ function HistoryRow({
   onRename: (label: string) => void;
   onRemove: () => void;
   onView: () => void;
+  viewing: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftLabel, setDraftLabel] = useState(entry.label);
@@ -88,9 +90,10 @@ function HistoryRow({
         <button
           type="button"
           onClick={onView}
-          className="rounded-lg px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/30"
+          disabled={viewing}
+          className="rounded-lg px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-400 dark:hover:bg-indigo-950/30"
         >
-          View
+          {viewing ? "Loading…" : "View"}
         </button>
         <button
           type="button"
@@ -106,8 +109,9 @@ function HistoryRow({
 }
 
 export function HistoryPage() {
-  const { entries, remove, rename, clear } = useHistory();
+  const { entries, remove, rename, clear, getDetail, source, loading } = useHistory();
   const [selected, setSelected] = useState<string[]>([]);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   function toggleSelect(id: string) {
@@ -118,18 +122,33 @@ export function HistoryPage() {
     });
   }
 
-  function viewEntry(entry: HistoryEntry) {
-    // Reuses the share-link mechanism (enhancements/12) to reload a past search:
-    // MatchPage's own hash-on-mount handling populates the form and re-runs it
-    // against the current model, exactly like a link a friend sent you.
-    const encoded = encodeShare({
-      v: 1,
-      r: entry.resumeText,
-      k: entry.topK,
-      n: entry.topN,
-      f: entry.filters,
-    });
-    navigate(`/#s=${encoded}`);
+  async function viewEntry(entry: HistoryEntry) {
+    // Server-backed list entries carry an empty `resumeText` (GET /me/history
+    // omits it -- see serverHistory.ts); fetch the real detail before building the
+    // share link, or a signed-in user's "View" would re-run an empty resume.
+    setViewingId(entry.id);
+    try {
+      const full = source === "server" ? await getDetail(entry.id) : entry;
+      if (!full) return;
+
+      // Reuses the share-link mechanism (enhancements/12) to reload a past search:
+      // MatchPage's own hash-on-mount handling populates the form and re-runs it
+      // against the current model, exactly like a link a friend sent you.
+      const encoded = encodeShare({
+        v: 1,
+        r: full.resumeText,
+        k: full.topK,
+        n: full.topN,
+        f: full.filters,
+      });
+      navigate(`/#s=${encoded}`);
+    } finally {
+      setViewingId(null);
+    }
+  }
+
+  if (loading) {
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Loading…</p>;
   }
 
   if (entries.length === 0) {
@@ -146,7 +165,9 @@ export function HistoryPage() {
         </svg>
         <p className="text-sm font-medium text-slate-600 dark:text-slate-300">No matches yet</p>
         <p className="max-w-xs text-xs text-slate-400 dark:text-slate-500">
-          Matches you run are saved here automatically, in this browser only.
+          {source === "server"
+            ? "Matches you run are saved to your account automatically."
+            : "Matches you run are saved here automatically, in this browser only."}
         </p>
       </div>
     );
@@ -167,7 +188,7 @@ export function HistoryPage() {
           </button>
           <button
             type="button"
-            onClick={clear}
+            onClick={() => void clear()}
             className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
           >
             Clear all
@@ -182,9 +203,10 @@ export function HistoryPage() {
             entry={entry}
             selected={selected.includes(entry.id)}
             onToggleSelect={() => toggleSelect(entry.id)}
-            onRename={(label) => rename(entry.id, label)}
-            onRemove={() => remove(entry.id)}
-            onView={() => viewEntry(entry)}
+            onRename={(label) => void rename(entry.id, label)}
+            onRemove={() => void remove(entry.id)}
+            onView={() => void viewEntry(entry)}
+            viewing={viewingId === entry.id}
           />
         ))}
       </ul>

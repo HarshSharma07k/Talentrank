@@ -18,6 +18,12 @@ const NAV_LINKS = [
   { to: "/how-it-works", label: "How it works" },
 ];
 
+// Signed-in only -- /saved is behind RequireAuth, same as /account (which never
+// appears here either, reached only via AuthMenu). Shown in the nav rather than
+// only via a link on JobCard, since a user should be able to find their saved
+// lists without first running a new match.
+const SAVED_LINK = { to: "/saved", label: "Saved" };
+
 function navLinkClassName({ isActive }: { isActive: boolean }): string {
   return [
     "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
@@ -58,6 +64,11 @@ export function Header({ state, auth }: { state: HealthState; auth: AuthSession 
               {link.label}
             </NavLink>
           ))}
+          {auth.status === "authenticated" && (
+            <NavLink to={SAVED_LINK.to} className={navLinkClassName}>
+              {SAVED_LINK.label}
+            </NavLink>
+          )}
         </nav>
 
         <div className="flex items-center gap-3">

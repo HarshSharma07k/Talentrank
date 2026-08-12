@@ -8,6 +8,7 @@ import { HowItWorksPage } from "./pages/HowItWorksPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MatchPage } from "./pages/MatchPage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { SavedListsPage } from "./pages/SavedListsPage";
 
 export const router = createBrowserRouter([
   {
@@ -24,6 +25,14 @@ export const router = createBrowserRouter([
         element: (
           <RequireAuth>
             <AccountPage />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: "saved",
+        element: (
+          <RequireAuth>
+            <SavedListsPage />
           </RequireAuth>
         ),
       },

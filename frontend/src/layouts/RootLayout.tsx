@@ -1,5 +1,6 @@
 import { Outlet } from "react-router";
 import { Header } from "../components/Header";
+import { MigrationPrompt } from "../components/MigrationPrompt";
 import { type AuthSession, useAuthSession } from "../hooks/useAuthSession";
 import { useHealthCheck, type UseHealthCheckResult } from "../hooks/useHealthCheck";
 
@@ -13,6 +14,7 @@ export function RootLayout() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
       <Header state={state} auth={auth} />
+      <MigrationPrompt auth={auth} />
 
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
         <Outlet context={context} />

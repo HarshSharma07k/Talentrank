@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import type { JobMatch } from "../lib/api";
 import { formatCategory, toAbsolutePercent } from "../lib/format";
 import { ExplanationPanel } from "./ExplanationPanel";
+import { FeedbackButtons } from "./FeedbackButtons";
 import { HighlightedText } from "./HighlightedText";
+import { SaveToListButton } from "./SaveToListButton";
 import { ScoreBar } from "./ScoreBar";
 
 const DESCRIPTION_PREVIEW_LENGTH = 260;
@@ -33,10 +35,26 @@ interface JobCardProps {
   // Attached to the root <li> so ResultsList can measure it for the FLIP reorder
   // animation (enhancements/11) without a double-wrapping <li><li> layout.
   elementRef?: (element: HTMLLIElement | null) => void;
+  // Identify the run this card belongs to -- required for FeedbackButtons to send
+  // a well-formed request. null in contexts where there is no real run yet (the
+  // pre-rerank shortlist) or the result isn't tied to one (enhancements/23).
+  resumeHash?: string | null;
+  runId?: string | null;
+  // The signed-in caller's existing up/down signal for this job, once known --
+  // see useFeedbackState. undefined while unknown/loading.
+  initialFeedbackSignal?: "up" | "down";
 }
 
-export function JobCard({ job, rank, elementRef }: JobCardProps) {
+export function JobCard({
+  job,
+  rank,
+  elementRef,
+  resumeHash = null,
+  runId = null,
+  initialFeedbackSignal,
+}: JobCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [explanationOpen, setExplanationOpen] = useState(false);
   const [hoveredSkill, setHoveredSkill] = useState<string | null>(null);
 
   const description = job.description.trim();
@@ -66,12 +84,31 @@ export function JobCard({ job, rank, elementRef }: JobCardProps) {
           {rank}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{job.job_title}</h3>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              {formatCategory(job.job_family)}
-            </span>
-            <RankDeltaBadge retrievalRank={job.retrieval_rank} rank={job.rank} />
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{job.job_title}</h3>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                {formatCategory(job.job_family)}
+              </span>
+              <RankDeltaBadge retrievalRank={job.retrieval_rank} rank={job.rank} />
+            </div>
+
+            {/* FeedbackButtons/SaveToListButton each render nothing for anonymous
+                visitors themselves -- see enhancements/23's own "do not show to
+                anonymous users" rule. */}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {resumeHash && (
+                <FeedbackButtons
+                  jobId={job.job_id}
+                  rank={job.rank}
+                  resumeHash={resumeHash}
+                  runId={runId}
+                  initialSignal={initialFeedbackSignal}
+                  expanded={explanationOpen}
+                />
+              )}
+              <SaveToListButton jobId={job.job_id} jobTitle={job.job_title} jobFamily={job.job_family} />
+            </div>
           </div>
 
           {skills && (
@@ -114,6 +151,7 @@ export function JobCard({ job, rank, elementRef }: JobCardProps) {
               explanation={job.explanation}
               scores={job.scores}
               onHoverMatchedSkill={setHoveredSkill}
+              onToggle={setExplanationOpen}
             />
           )}
         </div>

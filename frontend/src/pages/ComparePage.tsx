@@ -1,7 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { JobCard } from "../components/JobCard";
 import { useHistory } from "../hooks/useHistory";
-import type { HistoryEntry } from "../lib/history";
+import type { HistoryDetail } from "../lib/serverHistory";
 
 function EmptySelectionNotice() {
   return (
@@ -36,7 +37,7 @@ interface RankMovement {
   rankB: number;
 }
 
-function compareEntries(entryA: HistoryEntry, entryB: HistoryEntry) {
+function compareEntries(entryA: HistoryDetail, entryB: HistoryDetail) {
   const byIdA = new Map(entryA.results.map((job) => [job.job_id, job]));
   const byIdB = new Map(entryB.results.map((job) => [job.job_id, job]));
 
@@ -79,20 +80,66 @@ function SkillList({ title, skills }: { title: string; skills: string[] }) {
 
 export function ComparePage() {
   const [searchParams] = useSearchParams();
-  const { entries } = useHistory();
+  const { getDetail } = useHistory();
+  const idA = searchParams.get("a");
+  const idB = searchParams.get("b");
 
-  const entryA = entries.find((entry) => entry.id === searchParams.get("a"));
-  const entryB = entries.find((entry) => entry.id === searchParams.get("b"));
+  // GET /me/history has no `results` -- HistoryEntry.results at the list level is
+  // placeholder data for signed-in users (see serverHistory.ts). Fetching the real
+  // detail here, lazily, on demand, is what enhancements/23's own contract calls
+  // for, rather than diffing the placeholders and rendering an empty comparison.
+  const [detailA, setDetailA] = useState<HistoryDetail | null | undefined>(undefined);
+  const [detailB, setDetailB] = useState<HistoryDetail | null | undefined>(undefined);
 
-  if (!entryA || !entryB) {
+  // A ref, not a direct dependency: `getDetail`'s identity changes with every
+  // `entries` update, and re-running this effect on that would refetch on every
+  // unrelated history mutation, not just an id change -- the same idiom
+  // `HighlightedText` needed for `enhancements/11`'s own unstable-dependency issue,
+  // since oxlint's exhaustive-deps rule doesn't honour disable comments here.
+  const getDetailRef = useRef(getDetail);
+  getDetailRef.current = getDetail;
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetailA(undefined);
+    setDetailB(undefined);
+    if (idA) void getDetailRef.current(idA).then((result) => !cancelled && setDetailA(result));
+    if (idB) void getDetailRef.current(idB).then((result) => !cancelled && setDetailB(result));
+    return () => {
+      cancelled = true;
+    };
+  }, [idA, idB]);
+
+  if (!idA || !idB) {
     return <EmptySelectionNotice />;
   }
+
+  if (detailA === undefined || detailB === undefined) {
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Loading…</p>;
+  }
+
+  if (!detailA || !detailB) {
+    return <EmptySelectionNotice />;
+  }
+
+  const entryA = detailA;
+  const entryB = detailB;
+
+  const corpusMismatch =
+    entryA.corpusProfile !== null && entryB.corpusProfile !== null && entryA.corpusProfile !== entryB.corpusProfile;
 
   const { sharedJobIds, rankMovement, onlyInA, onlyInB } = compareEntries(entryA, entryB);
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Compare</h1>
+
+      {corpusMismatch && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+          These two runs were matched against different job corpora ("{entryA.corpusProfile}" vs "
+          {entryB.corpusProfile}") -- shared jobs and rank movement below are not meaningful across corpora.
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <p className="text-sm text-slate-600 dark:text-slate-300">
@@ -139,7 +186,7 @@ export function ComparePage() {
           <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{entryA.label}</h2>
           <ul className="space-y-3">
             {entryA.results.map((job, index) => (
-              <JobCard key={job.job_id} job={job} rank={index + 1} />
+              <JobCard key={job.job_id} job={job} rank={index + 1} resumeHash={entryA.resumeHash} runId={entryA.id} />
             ))}
           </ul>
         </div>
@@ -147,7 +194,7 @@ export function ComparePage() {
           <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{entryB.label}</h2>
           <ul className="space-y-3">
             {entryB.results.map((job, index) => (
-              <JobCard key={job.job_id} job={job} rank={index + 1} />
+              <JobCard key={job.job_id} job={job} rank={index + 1} resumeHash={entryB.resumeHash} runId={entryB.id} />
             ))}
           </ul>
         </div>
