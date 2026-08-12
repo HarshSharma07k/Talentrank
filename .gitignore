@@ -9,6 +9,7 @@ data/demo/
 .ruff_cache/
 .mypy_cache/
 .env
+*.db
 
 # AI-assistant project scaffolding: internal planning docs, working agreement, and
 # interview-story notes -- useful during development, not meant for the public repo.

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 import hashlib
 import time
 
@@ -12,10 +12,15 @@ import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import get_settings
 from src.talentrank.data import derive_job_family
+from src.talentrank.db.base import Base
+from src.talentrank.db.session import get_engine, get_sessionmaker
 from src.talentrank.index import FaissIndexManager
 from src.talentrank.models import ModelBundle, _compute_job_families, get_model_bundle
 
@@ -23,7 +28,49 @@ _LRU_CACHED_GETTERS = (
     get_settings,
     get_model_bundle,
     get_cache_backend,
+    get_engine,
+    get_sessionmaker,
 )
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+async def db_engine() -> AsyncIterator[AsyncEngine]:
+    """In-memory SQLite with `StaticPool`, schema via `Base.metadata.create_all`.
+
+    `StaticPool` is required: with the default pool, every connection to
+    `sqlite+aiosqlite:///:memory:` gets its *own* empty database, so a fixture that
+    creates tables on one connection and a test that queries on another sees
+    nothing. In-memory also keeps the binding invariant intact -- no test writes a
+    file, so the suite still passes with `data/` absent.
+    """
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection: object, connection_record: object) -> None:
+        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    sessionmaker = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        yield session
 
 
 @pytest.fixture(autouse=True)
@@ -172,6 +219,19 @@ def client(fake_bundle: ModelBundle) -> Iterator[TestClient]:
     """`TestClient(app)` used as a plain instance, so `lifespan` never runs and no
     real model or FAISS index loads -- see enhancements/17's note on this. The route
     dependency is swapped for `fake_bundle` instead.
+
+    Deliberately does **not** override `get_db` (enhancements/19's own doc sketch
+    suggested extending this fixture with a `db_session` parameter): `client` is a
+    plain sync fixture used by dozens of existing sync tests, and `db_session` is an
+    async fixture -- pytest cannot resolve an async fixture as a sync fixture's
+    dependency without every *consuming* test also being anyio-marked, which broke
+    22 existing tests when tried. Worse, `TestClient` runs requests through its own
+    internal event-loop portal thread, separate from whatever loop a pytest async
+    fixture runs on -- handing a pre-built `AsyncSession` to a `get_db` override
+    would raise "attached to a different loop" the moment a real endpoint used it,
+    per this doc's own risk note. No route depends on `get_db` yet (`19` is
+    infrastructure only); wiring this correctly is `20`'s problem, once there is a
+    real DB-backed endpoint to test against and choose the right pattern for.
     """
 
     from src.talentrank.api import app

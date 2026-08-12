@@ -19,6 +19,7 @@ import torch
 from src.talentrank import pipeline as pipeline_module
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
+from src.talentrank.db.session import get_engine
 from src.talentrank.extract import (
     EmptyExtractionError,
     EncryptedPdfError,
@@ -96,6 +97,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Corpus artifacts not found at startup; run scripts/prep_data.py and build_index.py.")
 
     yield
+
+    # enhancements/19: dispose the async DB engine on shutdown. Without this,
+    # asyncpg connections are left open and the container takes its full grace
+    # period to stop.
+    await get_engine().dispose()
 
 
 app = FastAPI(title="TalentRank API", lifespan=lifespan)
