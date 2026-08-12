@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Iterator
 import hashlib
 import time
 
+import httpx
 import numpy as np
 import pandas as pd
 import pytest
@@ -16,11 +17,13 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from src.talentrank.auth.passwords import get_password_hasher
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import get_settings
 from src.talentrank.data import derive_job_family
+from src.talentrank.db import models as db_models  # noqa: F401 -- registers all six tables on Base.metadata
 from src.talentrank.db.base import Base
-from src.talentrank.db.session import get_engine, get_sessionmaker
+from src.talentrank.db.session import get_db, get_engine, get_sessionmaker
 from src.talentrank.index import FaissIndexManager
 from src.talentrank.models import ModelBundle, _compute_job_families, get_model_bundle
 
@@ -30,6 +33,7 @@ _LRU_CACHED_GETTERS = (
     get_cache_backend,
     get_engine,
     get_sessionmaker,
+    get_password_hasher,
 )
 
 
@@ -239,5 +243,30 @@ def client(fake_bundle: ModelBundle) -> Iterator[TestClient]:
     app.dependency_overrides[get_model_bundle] = lambda: fake_bundle
     try:
         yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def async_client(fake_bundle: ModelBundle, db_session: AsyncSession) -> AsyncIterator[httpx.AsyncClient]:
+    """`httpx.AsyncClient` over `ASGITransport`, for tests that need a real DB-backed
+    endpoint (enhancements/20's `/auth/*` routes). Unlike `TestClient`, this runs the
+    ASGI app directly in the *same* event loop as the calling test coroutine -- no
+    internal portal thread -- so `db_session`, built by the anyio-managed `db_engine`
+    fixture, is safe to hand to a `get_db` override here. See `client`'s own
+    docstring above for why this doesn't work through `TestClient`.
+    """
+
+    from src.talentrank.api import app
+
+    async def _override_get_db() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    app.dependency_overrides[get_model_bundle] = lambda: fake_bundle
+    app.dependency_overrides[get_db] = _override_get_db
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            yield ac
     finally:
         app.dependency_overrides.clear()
