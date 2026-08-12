@@ -48,3 +48,10 @@ aiosqlite==0.22.1
 asyncpg==0.31.0
 greenlet==3.5.5
 Mako==1.4.1
+
+# enhancements/20: argon2-cffi hashes passwords (Argon2id); email-validator is
+# required at import time by pydantic's EmailStr, used in auth/schemas.py.
+argon2-cffi==25.1.0
+argon2-cffi-bindings==25.1.0
+email-validator==2.3.0
+dnspython==2.8.0

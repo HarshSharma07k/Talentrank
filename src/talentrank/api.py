@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 import torch
 
 from src.talentrank import pipeline as pipeline_module
+from src.talentrank.auth.router import router as auth_router
 from src.talentrank.cache import get_cache_backend
 from src.talentrank.config import BASE_DIR, CORS_ALLOWED_ORIGINS, get_settings
 from src.talentrank.db.session import get_engine
@@ -105,6 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="TalentRank API", lifespan=lifespan)
+app.include_router(auth_router)
 
 # Registration order is significant: the *last*-added middleware becomes the
 # *outermost* layer. CORS must wrap the rate limiter and the logger -- added last --
@@ -114,8 +116,18 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    # `cors_allow_origin_regex` has existed on `Settings` since enhancements/01 and
+    # this call has never passed it -- a pre-existing gap, fixed here because
+    # enhancements/15's Vercel preview domains need it and this is the commit that
+    # touches these lines (enhancements/20).
+    allow_origin_regex=get_settings().cors_allow_origin_regex,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],  # PATCH/DELETE are new verbs in this arc
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+    ],  # without Authorization, every authed cross-origin call 403s preflight
+    # No allow_credentials=True: this scheme is Bearer, not cookies. Setting it
+    # would be cargo-culting and materially widens what a malicious origin can do.
 )
 
 

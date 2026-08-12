@@ -105,6 +105,30 @@ class Settings(BaseSettings):
     database_max_overflow: int = 10
     database_pool_recycle_seconds: int = 1800
 
+    # Authentication (enhancements/20).
+    session_token_bytes: int = 32
+    session_ttl_seconds: int = 1_209_600  # 14 days
+    # Only renew expiry when the session is older than this, so the common
+    # authenticated request is a pure read against the sessions table.
+    session_sliding_renewal_seconds: int = 86_400
+    session_max_per_user: int = 10  # bounds unlimited session-row accumulation
+    # OWASP's second recommended Argon2id profile, cited as a published
+    # recommendation, not a value measured by this project. Deliberately not the
+    # library defaults (m=65536 KiB): this service runs on 2 vCPU with
+    # max_request_threads=8, so eight concurrent logins at 64 MiB each would be
+    # 512 MiB of transient allocation on a box that also holds two ML models.
+    argon2_time_cost: int = 2
+    argon2_memory_cost_kib: int = 19_456
+    argon2_parallelism: int = 1
+    password_min_chars: int = 12
+    password_max_chars: int = 128  # a DoS control, not a usability one -- see auth/schemas.py
+    auth_rate_limit_requests: int = 5
+    auth_rate_limit_window_seconds: int = 300
+    authenticated_rate_limit_requests: int = 120
+    # Lets the hosted demo stay open for matching but closed for signup without a
+    # code change.
+    auth_registration_enabled: bool = True
+
     # CORS / serving.
     # `NoDecode`: pydantic-settings otherwise tries to JSON-decode a `list[str]` env
     # value before validators run, so `TALENTRANK_CORS_ALLOWED_ORIGINS=a,b` would fail
