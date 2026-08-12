@@ -10,6 +10,7 @@ data/processed/*
 .venv/
 **/__pycache__/
 *.pyc
+*.db
 .git/
 .pytest_cache/
 .mypy_cache/

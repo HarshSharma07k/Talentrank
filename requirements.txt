@@ -37,3 +37,14 @@ python-multipart==0.0.32
 # to in-memory instead of actually connecting.
 gunicorn==23.0.0
 redis==8.1.0
+
+# enhancements/19: SQLAlchemy 2.0 async ORM + Alembic migrations. aiosqlite is the
+# async driver for local/test SQLite; asyncpg is the async driver for the hosted
+# demo's managed Postgres (enhancements/24). greenlet and Mako are sqlalchemy's/
+# alembic's own transitive requirements, pinned explicitly per Rule 2.
+sqlalchemy==2.0.52
+alembic==1.19.1
+aiosqlite==0.22.1
+asyncpg==0.31.0
+greenlet==3.5.5
+Mako==1.4.1

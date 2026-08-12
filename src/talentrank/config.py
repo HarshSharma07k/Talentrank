@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -94,6 +94,17 @@ class Settings(BaseSettings):
     # Demo corpus.
     demo_corpus_size: int = 25000
 
+    # Persistence (enhancements/19). `database_url` is `SecretStr` because in
+    # production it carries a PostgreSQL password -- that is not decoration, it is
+    # what stops an accidental `repr(settings)` in a log line or traceback from
+    # printing a credential. Left `None` here and derived in `_derive_paths` below,
+    # same pattern as the path fields above.
+    database_url: SecretStr | None = None
+    database_echo: bool = False  # SQL logging; never enable in production, it logs parameter values.
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
+    database_pool_recycle_seconds: int = 1800
+
     # CORS / serving.
     # `NoDecode`: pydantic-settings otherwise tries to JSON-decode a `list[str]` env
     # value before validators run, so `TALENTRANK_CORS_ALLOWED_ORIGINS=a,b` would fail
@@ -123,6 +134,10 @@ class Settings(BaseSettings):
             self.embeddings_cache_dir = self.processed_data_dir / "embeddings_cache"
         if self.term_idf_path is None:
             self.term_idf_path = self.processed_data_dir / "term_idf.json"
+        if self.database_url is None:
+            # `.as_posix()`, not the bare Path/f-string: on Windows a plain str(Path)
+            # renders backslashes, which are not valid path separators inside a URL.
+            self.database_url = SecretStr(f"sqlite+aiosqlite:///{(self.data_dir / 'talentrank.db').as_posix()}")
 
         if self.corpus_profile == "demo":
             demo_dir = self.data_dir / "demo"

@@ -55,3 +55,22 @@ def test_cors_origins_parse_csv(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
     assert get_settings().cors_allowed_origins == ["https://a.example.com", "https://b.example.com"]
+
+
+def test_database_url_is_derived_from_data_dir() -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert settings.database_url is not None
+    url = settings.database_url.get_secret_value()
+    assert url.startswith("sqlite+aiosqlite:///")
+    assert url.endswith("talentrank.db")
+    assert str(settings.data_dir) in url or settings.data_dir.as_posix() in url
+
+
+def test_database_url_is_not_in_settings_repr() -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    assert "sqlite+aiosqlite" not in repr(settings)
+    assert "**********" in repr(settings.database_url)
