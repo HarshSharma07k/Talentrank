@@ -55,6 +55,8 @@ export interface MatchResponse {
   took_ms: number;
   cached: boolean;
   corpus_size: number;
+  resume_hash: string;
+  run_id: string | null;
 }
 
 export interface HealthResponse {

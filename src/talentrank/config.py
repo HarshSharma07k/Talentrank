@@ -129,6 +129,19 @@ class Settings(BaseSettings):
     # code change.
     auth_registration_enabled: bool = True
 
+    # User-scoped data (enhancements/21).
+    max_history_entries_per_user: int = 200  # breach: drop oldest, silently -- history is a convenience
+    max_saved_lists_per_user: int = 50  # breach: 409 -- the user named this thing, do not delete it
+    max_items_per_saved_list: int = 200  # breach: 409
+    # Mirrors frontend/src/lib/history.ts's DESCRIPTION_STORAGE_MAX_CHARS, so a run
+    # looks the same whether it came from local or server storage.
+    history_description_max_chars: int = 400
+    history_page_size: int = 20
+    # Not in enhancements/21's own "Config keys added" list, added here per Rule 4
+    # (no magic numbers): mirrors frontend/src/lib/history.ts's LABEL_MAX_CHARS,
+    # used when persist_run auto-derives a label from resume_text.
+    history_label_max_chars: int = 50
+
     # CORS / serving.
     # `NoDecode`: pydantic-settings otherwise tries to JSON-decode a `list[str]` env
     # value before validators run, so `TALENTRANK_CORS_ALLOWED_ORIGINS=a,b` would fail
