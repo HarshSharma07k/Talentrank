@@ -10,6 +10,7 @@ from src.talentrank.auth import service
 from src.talentrank.auth.deps import auth_rate_limiter, get_current_user, get_current_user_and_token
 from src.talentrank.auth.schemas import (
     ChangePasswordRequest,
+    DeleteAccountRequest,
     LoginRequest,
     RegisterRequest,
     SessionResponse,
@@ -92,6 +93,23 @@ async def change_password(
     user, token = user_and_token
     try:
         await service.change_password(db, user, body.current_password, body.new_password, token)
+    except service.InvalidCurrentPasswordError as exc:
+        raise HTTPException(status_code=401, detail="Current password is incorrect.") from exc
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    body: DeleteAccountRequest,
+    user_and_token: tuple[User, str] = Depends(get_current_user_and_token),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Irreversible. See enhancements/24 -- `service.delete_account` cascades to
+    every child table via `ON DELETE CASCADE`; no explicit session revocation is
+    needed here, the caller's own session row is deleted along with the rest."""
+
+    user, _token = user_and_token
+    try:
+        await service.delete_account(db, user, body.current_password)
     except service.InvalidCurrentPasswordError as exc:
         raise HTTPException(status_code=401, detail="Current password is incorrect.") from exc
 

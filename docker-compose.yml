@@ -22,10 +22,31 @@
 #   a clean stack does not hit this, since the singleton then resolves for the
 #   first time with redis already reachable.
 #
-# Compose auto-loads a project-root .env for ${VAR} substitution below (copy
-# .env.example if you want to override anything); none of these variables are
-# required to exist for `docker compose up` to work with sane defaults.
+# Compose auto-loads a project-root .env for ${VAR} substitution below. Unlike
+# every other variable here, POSTGRES_PASSWORD has no default (the `:?` syntax
+# below) -- enhancements/24: "credentials come from the env-file, never from a
+# literal in the compose file," and a database service is no longer optional once
+# accounts exist, so `docker compose up` refuses to start without one rather than
+# silently picking a guessable default. Copy .env.example to .env and set it.
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-talentrank}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env -- see .env.example}
+      - POSTGRES_DB=${POSTGRES_DB:-talentrank}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Not just "is the process up" -- pg_isready confirms Postgres is actually
+      # accepting connections. Without this as the api service's depends_on
+      # condition, the api container wins the startup race roughly half the time
+      # and dies attempting its first connection.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-talentrank}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
@@ -37,6 +58,13 @@ services:
       - TALENTRANK_CACHE_BACKEND=redis
       - TALENTRANK_REDIS_URL=redis://redis:6379/0
       - TALENTRANK_CORS_ALLOWED_ORIGINS=${TALENTRANK_CORS_ALLOWED_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      # asyncpg, not psycopg -- the async driver this project's SQLAlchemy engine
+      # is pinned to (enhancements/19). Same credentials the postgres service
+      # above was given, read from the same .env, never duplicated as a literal.
+      - TALENTRANK_DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-talentrank}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env -- see .env.example}@postgres:5432/${POSTGRES_DB:-talentrank}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       # Local dev convenience: data/ changes (a re-run of prep_data.py etc.)
       # show up on container restart without an image rebuild. Read-only --
@@ -67,3 +95,11 @@ services:
     # Wired in but off by default -- see 00-overview.md's confirmed product
     # decisions. Only started by `docker compose --profile redis up`.
     profiles: ["redis"]
+
+volumes:
+  # Named, not bind-mounted: `docker compose down -v` is the deliberate way to
+  # discard it (enhancements/24's own verification calls for proving accounts
+  # survive `restart` and a plain `down && up`, and separately for proving a
+  # `down -v` first genuinely starts from empty rather than reusing a volume
+  # created back when something else was broken).
+  postgres_data:

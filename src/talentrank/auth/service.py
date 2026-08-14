@@ -172,3 +172,23 @@ async def change_password(db: AsyncSession, user: User, current: str, new: str, 
     user.password_hash = hash_password(new)
     await db.flush()
     await revoke_all_sessions(db, user, except_token=current_token)
+
+
+async def delete_account(db: AsyncSession, user: User, current_password: str) -> None:
+    """Verifies `current_password`, then deletes the `users` row. Irreversible.
+
+    A Core bulk `DELETE`, not `db.delete(user)` -- same reasoning as
+    `lists.delete_list` (enhancements/21): it works in one round trip regardless of
+    how many child rows exist, relying on the DB-level `ON DELETE CASCADE` wired in
+    enhancements/19 (`sessions`, `match_runs` -> `match_feedback`, `saved_lists` ->
+    `saved_list_items`, and `match_feedback` directly) rather than the ORM
+    re-issuing a DELETE per relationship. No explicit session revocation is needed
+    first -- the caller's own session row is deleted along with every other child
+    row by the same cascade.
+    """
+
+    if not verify_password(user.password_hash, current_password):
+        raise InvalidCurrentPasswordError()
+
+    await db.execute(delete(User).where(User.id == user.id))
+    await db.flush()

@@ -1,0 +1,5 @@
+# Shell scripts get baked into Linux Docker images and run via #!/bin/sh -- a
+# CRLF checkout on this Windows dev machine (core.autocrlf=true) would break the
+# shebang and the entrypoint's own `set -e` at container startup. Force LF
+# regardless of platform checkout settings.
+*.sh text eol=lf

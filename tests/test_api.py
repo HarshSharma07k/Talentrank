@@ -52,6 +52,32 @@ def test_health_shape(client: TestClient) -> None:
     assert body["warm"] is True
 
 
+def test_health_does_not_leak_database_url(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """See enhancements/24: `HealthResponse` must report the dialect and
+    reachability only, never the connection string itself -- `Settings.database_url`
+    is a `SecretStr` for exactly this reason (a Postgres URL carries a password).
+    Verified end to end: a real secret set via env must not appear anywhere in the
+    response body, not just absent from `HealthResponse`'s declared fields.
+    """
+
+    secret_password = "s3cr3t-db-password-should-never-leak"  # noqa: S105 -- test fixture, not a real credential
+    monkeypatch.setenv(
+        "TALENTRANK_DATABASE_URL", f"postgresql+asyncpg://appuser:{secret_password}@db.example.com/talentrank"
+    )
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    assert secret_password not in repr(settings.database_url)  # SecretStr masking itself
+    assert secret_password not in str(settings)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert secret_password not in response.text
+    assert "database_url" not in response.json()
+    assert "db.example.com" not in response.text
+
+
 def test_health_reports_live_cache_backend_not_configured_one(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

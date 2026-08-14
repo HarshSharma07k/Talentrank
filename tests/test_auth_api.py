@@ -7,10 +7,17 @@ than the sync `client` fixture -- see `conftest.py`'s docstrings on both for why
 
 from __future__ import annotations
 
+import uuid
+
 import httpx
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.talentrank.config import get_settings
+from src.talentrank.db.models import MatchFeedback, MatchRun, SavedList, SavedListItem
+from src.talentrank.db.models import Session as DBSession
+from src.talentrank.db.models import User
 
 pytestmark = pytest.mark.anyio
 
@@ -132,3 +139,82 @@ async def test_match_with_invalid_bearer_token_still_401s_not_500s(async_client:
     )
 
     assert response.status_code == 200
+
+
+# --- Account deletion (enhancements/24) -----------------------------------------
+
+
+async def test_delete_account_requires_current_password(async_client: httpx.AsyncClient) -> None:
+    register_response = await _register(async_client, "delete-wrong-pw@example.com", "correct-horse-battery")
+    token = register_response.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await async_client.request("DELETE", "/auth/me", json={"current_password": "not-it"}, headers=headers)
+    assert response.status_code == 401
+
+    # A wrong password must not delete anything -- the account still authenticates.
+    me_response = await async_client.get("/auth/me", headers=headers)
+    assert me_response.status_code == 200
+
+
+async def test_deleting_account_removes_all_user_rows(
+    async_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Asserts emptiness in every one of enhancements/19's six tables by name --
+    a test that checks three of six passes while leaving personal data behind."""
+
+    register_response = await _register(async_client, "delete-cascade@example.com", "correct-horse-battery")
+    token = register_response.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    user_id = uuid.UUID(register_response.json()["user"]["id"])
+
+    match_response = await async_client.post("/match", json={"resume_text": "x" * MIN_RESUME_CHARS}, headers=headers)
+    assert match_response.status_code == 200
+    match_body = match_response.json()
+    run_id = match_body["run_id"]
+    assert run_id is not None
+    assert match_body["results"], "fixture jobs frame must produce at least one result"
+    job_id = match_body["results"][0]["job_id"]
+
+    feedback_response = await async_client.post(
+        "/me/feedback",
+        json={"job_id": job_id, "signal": "up", "rank": 1, "resume_hash": match_body["resume_hash"], "run_id": run_id},
+        headers=headers,
+    )
+    assert feedback_response.status_code == 201
+
+    list_response = await async_client.post("/me/lists", json={"name": "Test list"}, headers=headers)
+    assert list_response.status_code == 201
+    list_id = list_response.json()["id"]
+    item_response = await async_client.post(
+        f"/me/lists/{list_id}/items",
+        json={"job_id": job_id, "job_title": "Some Title", "job_family": "OTHER"},
+        headers=headers,
+    )
+    assert item_response.status_code == 201
+
+    delete_response = await async_client.request(
+        "DELETE", "/auth/me", json={"current_password": "correct-horse-battery"}, headers=headers
+    )
+    assert delete_response.status_code == 204
+
+    assert (await db_session.execute(select(User).where(User.id == user_id))).scalar_one_or_none() is None
+    assert (await db_session.execute(select(DBSession).where(DBSession.user_id == user_id))).first() is None
+    assert (await db_session.execute(select(MatchRun).where(MatchRun.user_id == user_id))).first() is None
+    assert (await db_session.execute(select(SavedList).where(SavedList.user_id == user_id))).first() is None
+    assert (await db_session.execute(select(SavedListItem))).first() is None  # only list in this test's session
+    assert (await db_session.execute(select(MatchFeedback).where(MatchFeedback.user_id == user_id))).first() is None
+
+
+async def test_deleted_account_token_no_longer_authenticates(async_client: httpx.AsyncClient) -> None:
+    register_response = await _register(async_client, "delete-token@example.com", "correct-horse-battery")
+    token = register_response.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    delete_response = await async_client.request(
+        "DELETE", "/auth/me", json={"current_password": "correct-horse-battery"}, headers=headers
+    )
+    assert delete_response.status_code == 204
+
+    me_response = await async_client.get("/auth/me", headers=headers)
+    assert me_response.status_code == 401
