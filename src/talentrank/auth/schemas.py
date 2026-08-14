@@ -39,6 +39,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=_settings.password_min_chars, max_length=_settings.password_max_chars)
 
 
+class DeleteAccountRequest(BaseModel):
+    """See enhancements/24. Irreversible -- the current password is required so a
+    stolen but still-valid bearer token alone cannot destroy the account."""
+
+    current_password: str = Field(max_length=_settings.password_max_chars)
+
+
 class UserResponse(BaseModel):
     """Built field by field from a `User` ORM object in `from_user` below -- never
     `from_attributes` over the ORM object directly, which is one renamed column

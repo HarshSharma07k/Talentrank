@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     # authenticated request is a pure read against the sessions table.
     session_sliding_renewal_seconds: int = 86_400
     session_max_per_user: int = 10  # bounds unlimited session-row accumulation
+    # enhancements/24: bounds a single purge_expired_sessions() DELETE batch so a
+    # large backlog doesn't hold one long transaction against the sessions table.
+    session_purge_batch_size: int = 1000
     # OWASP's second recommended Argon2id profile, cited as a published
     # recommendation, not a value measured by this project. Deliberately not the
     # library defaults (m=65536 KiB): this service runs on 2 vCPU with

@@ -91,3 +91,65 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - run: pip install -r requirements-dev.txt --extra-index-url https://download.pytorch.org/whl/cpu
       - run: mypy src/talentrank
+
+  # enhancements/24: schema drift between models.py and migrations/versions/ is
+  # invisible locally, because conftest.py's db_engine fixture builds its schema
+  # via Base.metadata.create_all, never through the migration files themselves --
+  # so a model change with no matching migration passes every existing test.
+  # `alembic check` against a scratch SQLite database, freshly migrated to head,
+  # closes that gap. Confirmed to actually fail (not just "always green"): a
+  # deliberately added, unmigrated column produced a real non-zero exit and
+  # "New upgrade operations detected" before this job was trusted.
+  migration-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: Migrate a scratch SQLite database to head
+        run: |
+          rm -f /tmp/ci-drift-check.db
+          TALENTRANK_DATABASE_URL="sqlite+aiosqlite:////tmp/ci-drift-check.db" python -m alembic upgrade head
+      - name: Assert no autogenerate drift between models.py and migrations/
+        run: |
+          TALENTRANK_DATABASE_URL="sqlite+aiosqlite:////tmp/ci-drift-check.db" python -m alembic check
+
+  # enhancements/24. Blocking: this repo is public and now has a config surface
+  # (TALENTRANK_DATABASE_URL) that can carry a real credential -- a leaked secret
+  # here is a silent, permanent failure mode, not a code-quality nit. fetch-depth: 0
+  # so gitleaks scans full history, not just the current commit.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # enhancements/24. Non-blocking, same rationale as the mypy job above: pip-audit
+  # flags real CVEs in transitive ML dependencies (torch, at time of writing) whose
+  # actual vulnerable code path (torch.jit.script) this project never calls, and
+  # bumping a pinned model-serving dependency mid-flight without re-running the
+  # full latency/NDCG matrix would itself violate Rule 1. Surfaced for a human to
+  # triage, not auto-failed -- see engineering-challenges.md for the specific
+  # findings recorded when this job was added and why each was judged non-blocking
+  # at that time. Auth dependencies (argon2-cffi, sqlalchemy, alembic, asyncpg,
+  # email-validator) are the ones a finding here should actually block on.
+  pip-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.txt
