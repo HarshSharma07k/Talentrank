@@ -8,6 +8,13 @@
 
 TalentRank is a semantic resume-to-job matching system built around a two-stage retrieval pipeline: fast bi-encoder recall with FAISS, followed by cross-encoder reranking for precision. It is structured like a production search service, with offline index building, cached embeddings, an API layer, and evaluation metrics that are measured rather than invented.
 
+## 🔗 Live Demo
+
+- **App:** https://talentrank-lime.vercel.app
+- **API:** https://talentrank-api-328510345909.us-central1.run.app/health
+
+The hosted demo runs a **stratified ~25,000-posting subsample** of the full corpus (`data/demo/`) on a free-tier host — every figure below is labeled by which corpus/hardware it came from, and hosted numbers are never merged with local ones. The API scales to zero when idle, so the first request after a quiet period will be slower while it cold-starts (~9 s to reload both models and the index) before settling to normal latency.
+
 ## 🏗️ System Architecture
 
 TalentRank uses a retrieval-first design so the expensive model only runs on a short shortlist of candidates.
@@ -43,25 +50,31 @@ Offline, the corpus is embedded once and written to disk. Online, a resume is em
 
 ## 📊 Measured Results
 
-All numbers below are kept exactly as measured on local hardware.
+Every number below comes from `.claude/reference/measured-facts.md`, with the exact command that produced it — nothing here is estimated. **Local and hosted figures are never merged**: different hardware, and the hosted demo runs the smaller subsample described above.
 
 ### 🗂️ Corpus Size
 
-- Corpus size: 123,849 job postings
+- Full corpus (local): 123,849 job postings
+- Hosted demo corpus: 25,911 job postings (stratified sample, every job family represented)
 
-### 📈 Evaluation Metrics
+### 📈 Evaluation Metrics (full corpus, local)
 
 | Pipeline Stage | NDCG@10 | Notes |
 | :--- | :--- | :--- |
 | Bi-Encoder Baseline | 0.0000 | Sparse proxy labels make exact matches hard to score. |
 | Bi-Encoder + Cross-Encoder Rerank | 0.0071 | Reranking improves the shortlist with the same labeled setup. |
 
+The shipped config (`top_k=30`, `cross_encoder_max_length=256`, `rerank_text_max_chars=1200`) improves this further to NDCG@10 = 0.0100 while cutting local `/match` latency **4.8×** (666.1 ms → 138.7 ms p50) — see the full latency × NDCG matrix in `measured-facts.md` for every config that was tried and rejected along the way.
+
 ### ⚡ System Latency
 
-| Hardware | p50 Latency | Bottleneck |
+| Environment | p50 Latency | Notes |
 | :--- | :--- | :--- |
-| CPU Only | 5.5s | Transformer cross-attention over 100 candidate pairs. |
-| GPU (RTX 3050) | 2.7s | Batched inference through CUDA. |
+| Local, CPU (shipped config, `top_k=30`) | 138.7 ms | Full corpus, this dev machine. |
+| Local, GPU (RTX 3050, shipped config) | 166.8 ms | *Slower* than CPU — a single 30-pair cross-encoder batch is too small for CUDA overhead to pay off. |
+| **Hosted (Cloud Run, demo corpus)** | **3164.9 ms** | Includes public-internet round-trip to `us-central1`; a free 2 vCPU host is genuinely slower than local CPU, not a bug. |
+
+**On honesty about the hosted number:** 3.2 s p50 is the real, measured latency a visitor sees, not a number chosen to look good. It reflects a $0/month, 2 vCPU, scale-to-zero host plus real network round-trip — the local 138.7 ms figure is what the same code does on dedicated hardware with no network hop. Both are true; neither substitutes for the other.
 
 ## 📋 Prerequisites
 
@@ -181,6 +194,14 @@ npm run dev
 ```
 
 Then open `http://localhost:5173`. See `frontend/README.md` for details.
+
+## ☁️ Deployment
+
+- **Frontend:** static Vite build on Vercel, `frontend/vercel.json` handles the SPA rewrite so client-side routes survive a reload.
+- **API:** Docker image on **Google Cloud Run** (2 vCPU / 2 GiB, scales to zero when idle), built from the same [`Dockerfile`](Dockerfile) used locally, pushed to Artifact Registry.
+- **Database:** managed Postgres on [Neon](https://neon.tech)'s free tier — Cloud Run's filesystem is ephemeral, so SQLite would lose every account on the next cold start.
+
+The original plan (per `.claude/enhancements/15-deploy-hf-and-vercel.md`) targeted a Hugging Face Docker Space, chosen when its `cpu-basic` tier was free. Mid-project, Hugging Face began requiring a PRO subscription ($9/mo) for Docker/Gradio Spaces on new accounts, even on that "free" tier — confirmed live while deploying, not assumed. Cloud Run's own perpetual free tier was the closer match to the project's original $0/month goal, and it runs the existing Dockerfile with no changes. `deploy/huggingface/README.md` is kept as a written runbook for the HF path in case that's ever the better option again; it wasn't used for this deploy.
 
 ## 📂 Repository Layout
 
