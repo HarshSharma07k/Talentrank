@@ -39,6 +39,12 @@ export const LATENCY_TABLE: LatencyRow[] = [
     p50Ms: 166.8,
     p95Ms: 189.3,
   },
+  {
+    config: "Shipped config, demo corpus, live",
+    hardware: "Hosted (Cloud Run, incl. network)",
+    p50Ms: 3164.9,
+    p95Ms: 3510.6,
+  },
 ];
 
 export const SPARSE_LABEL_CAVEAT =
@@ -53,6 +59,12 @@ export const GPU_LATENCY_NOTE =
   "GPU measured slower than CPU here (166.8 ms vs 138.7 ms p50) -- a single request's " +
   "cross-encoder pass over only 30 candidates is too small a batch for CUDA's kernel-launch " +
   "and transfer overhead to pay for itself. The hosted demo runs on CPU regardless.";
+
+export const HOSTED_LATENCY_NOTE =
+  "The hosted row above is a real measurement from this machine over the public internet, " +
+  "not a local number relabeled -- it includes round-trip network time to the host and a " +
+  "free 2-vCPU tier, so it's honestly slower than the local figures. That's the real cost " +
+  "of a $0/month deployment, not a bug in the pipeline.";
 
 export const DEMO_VS_FULL_NOTE =
   `The hosted demo searches a stratified ${DEMO_CORPUS_SIZE.toLocaleString()}-posting ` +
