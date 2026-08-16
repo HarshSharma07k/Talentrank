@@ -9,6 +9,7 @@ import {
   FULL_CORPUS_NON_OTHER_FAMILY_PCT,
   FULL_CORPUS_SIZE,
   GPU_LATENCY_NOTE,
+  HOSTED_LATENCY_NOTE,
   LATENCY_TABLE,
   NDCG_TABLE,
   SPARSE_LABEL_CAVEAT,
@@ -173,6 +174,7 @@ export function HowItWorksPage() {
           </table>
         </div>
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{GPU_LATENCY_NOTE}</p>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{HOSTED_LATENCY_NOTE}</p>
       </SectionCard>
 
       <SectionCard title="Full corpus vs. hosted demo">
